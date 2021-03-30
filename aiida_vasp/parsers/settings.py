@@ -70,9 +70,13 @@ FILE_PARSER_SETS = {
 
 NODES = {
     'misc': {
-        'link_name': 'misc',
-        'type': 'dict',
-        'quantities': ['total_energies', 'maximum_stress', 'maximum_force', 'symmetries', 'magnetization', 'notifications', 'version']
+        'link_name':
+            'misc',
+        'type':
+            'dict',
+        'quantities': [
+            'total_energies', 'maximum_stress', 'maximum_force', 'magnetization', 'notifications', 'run_status', 'run_stats', 'version'
+        ]
     },
     'kpoints': {
         'link_name': 'kpoints',

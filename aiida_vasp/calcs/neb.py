@@ -51,7 +51,7 @@ class VaspNEBCalculation(VaspCalculation):
                    valid_type=(get_data_class('structure'), get_data_class('cif')),
                    help='The input structure (POSCAR) for the final image.')
         spec.input_namespace('neb_images',
-                             valid_type=get_data_class('vasp.potcar'),
+                             valid_type=(get_data_class('structure'), get_data_class('cif')),
                              help='Starting structure for the NEB images',
                              dynamic=True)
         # Need namespace on this as it should also accept keys that are of `kind`. These are unknown

@@ -22,7 +22,7 @@ jobs:
       - name: Install wheel
         run: pip install wheel
       - name: Install AiiDA-VASP
-        run:
+        run: |
           pip install -e .[graphs,tests,pre-commit]
           pip freeze
       - name: Run pre-commit
@@ -69,7 +69,8 @@ jobs:
         if: ${{ matrix.python }} == '3.8'
         run: pip install coveralls
       - name: Install AiiDA
-        run: pip install -e git+https://github.com/aiidateam/aiida_core#egg=aiida-core
+        #run: pip install -e git+https://github.com/aiidateam/aiida_core#egg=aiida-core
+        run: pip install aiida-core
       - name: Install AiiDA-Wannier90
         run: pip install -e git+https://github.com/aiidateam/aiida-wannier90#egg=aiida-wannier90
       - name: Install AiiDA-VASP
