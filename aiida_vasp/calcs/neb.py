@@ -73,10 +73,7 @@ class VaspNEBCalculation(VaspCalculation):
 
         # Define outputs.
         # remote_folder and retrieved are passed automatically
-        spec.output_namespace('misc',
-                              valid_type=get_data_class('dict'),
-                              help='The output parameters containing smaller quantities that do not depend on system size.')
-        spec.output_namespace('neb_images', required=True, valid_type=get_data_class('structure'), help='NEB images')
+        spec.output_namespace('neb_images', required=False, valid_type=get_data_class('structure'), help='NEB images')
         spec.output_namespace('chgcar', valid_type=get_data_class('vasp.chargedensity'), required=False, help='The output charge density.')
         spec.output_namespace('wavecar',
                               valid_type=get_data_class('vasp.wavefun'),
@@ -85,7 +82,7 @@ class VaspNEBCalculation(VaspCalculation):
         spec.output_namespace('site_magnetization',
                               valid_type=get_data_class('dict'),
                               required=False,
-                              help='The output of the site magnetization')
+                              help='The output of the site magnetization for each image.')
         spec.exit_code(0, 'NO_ERROR', message='the sun is shining')
         spec.exit_code(350, 'ERROR_NO_RETRIEVED_FOLDER', message='the retrieved folder data node could not be accessed.')
         spec.exit_code(351,
@@ -111,7 +108,7 @@ class VaspNEBCalculation(VaspCalculation):
         Notice that we here utilize both the retrieve batch of files, which are always stored after retrieval and
         the temporary retrieve list which is automatically cleared after parsing.
         """
-        calcinfo = super().prepare_for_submission(self, tempfolder)
+        calcinfo = super().prepare_for_submission(tempfolder)
 
         nimages = len(self.inputs.neb_images)
         nimage_keys = sorted(list(self.inputs.neb_images.keys()))
@@ -163,12 +160,14 @@ class VaspNEBCalculation(VaspCalculation):
 
         if store:
             calcinfo.retrieve_list.extend(
-                list(set(image_folder_paths(image_folders, self._PER_IMAGE_ALWAYS_RETRIEVE_LIST + additional_retrieve_list))))
+                image_folder_paths(image_folders, set(self._PER_IMAGE_ALWAYS_RETRIEVE_LIST + additional_retrieve_list)))
             calcinfo.retrieve_temporary_list.extend(image_folder_paths(image_folders, additional_retrieve_temp_list))
         else:
             calcinfo.retrieve_temporary_list.extend(
-                list(set(image_folder_paths(image_folders, self._PER_IMAGE_ALWAYS_RETRIEVE_LIST + additional_retrieve_temp_list))))
+                image_folder_paths(image_folders, set(self._PER_IMAGE_ALWAYS_RETRIEVE_LIST + additional_retrieve_temp_list)))
             calcinfo.retrieve_list.extend(image_folder_paths(image_folders, additional_retrieve_list))
+
+        self.logger.warning('Calcinfo: {}'.format(calcinfo))
 
         return calcinfo
 
@@ -199,5 +198,6 @@ def image_folder_paths(image_folders, retrieve_names):
     retrieve_list = []
     for key in retrieve_names:
         for fdname in image_folders:
-            retrieve_list.append(fdname + '/' + key)
+            # Need to use the tuple format to keep the sub directory structure
+            retrieve_list.append([fdname + '/' + key, '.', 2])
     return retrieve_list
