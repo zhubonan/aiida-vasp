@@ -31,6 +31,7 @@ class VaspNEBCalculation(VaspCalculation):
     _PER_IMAGE_ALWAYS_RETRIEVE_LIST = ['OUTCAR', 'CONTCAR']
     _query_type_string = 'vasp.neb'
     _plugin_type_string = 'vasp.neb'
+    _default_parser = 'vasp.neb'
 
     @classmethod
     def define(cls, spec):
@@ -69,12 +70,14 @@ class VaspNEBCalculation(VaspCalculation):
                              required=False,
                              help='The wave function coefficients. (WAVECAR)')
         spec.input('settings', valid_type=get_data_class('dict'), required=False, help='Additional parameters not related to VASP itself.')
-        spec.input('metadata.options.parser_name', default='vasp.vasp')
+        spec.input('metadata.options.parser_name', default=cls._default_parser)
 
         # Define outputs.
         # remote_folder and retrieved are passed automatically
-        spec.output_namespace('neb_images', required=False, valid_type=get_data_class('structure'), help='NEB images')
+        spec.output_namespace('structure', required=True, valid_type=get_data_class('structure'), help='NEB images')
         spec.output_namespace('chgcar', valid_type=get_data_class('vasp.chargedensity'), required=False, help='The output charge density.')
+        spec.output_namespace('kpoints', valid_type=get_data_class('array.kpoints'), required=False, help='Kpoints for each image.')
+        spec.output_namespace('misc', valid_type=get_data_class('dict'), required=True, help='Per-image misc output.')
         spec.output_namespace('wavecar',
                               valid_type=get_data_class('vasp.wavefun'),
                               required=False,
@@ -83,6 +86,7 @@ class VaspNEBCalculation(VaspCalculation):
                               valid_type=get_data_class('dict'),
                               required=False,
                               help='The output of the site magnetization for each image.')
+        spec.output('neb_misc', valid_type=get_data_class('dict'), help='NEB related data combined for each image')
         spec.exit_code(0, 'NO_ERROR', message='the sun is shining')
         spec.exit_code(350, 'ERROR_NO_RETRIEVED_FOLDER', message='the retrieved folder data node could not be accessed.')
         spec.exit_code(351,
