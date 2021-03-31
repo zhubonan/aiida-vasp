@@ -26,7 +26,7 @@ from aiida_vasp.utils.fixtures.testdata import data_path
 from aiida_vasp.parsers.file_parsers.incar import IncarParser
 from aiida_vasp.parsers.file_parsers.poscar import PoscarParser
 from aiida_vasp.parsers.file_parsers.vasprun import VasprunParser
-from aiida_vasp.parsers.file_parsers.outcar import OutcarParser
+from aiida_vasp.parsers.file_parsers.outcar import OutcarParser, VtstNEBOutcarParser
 from aiida_vasp.utils.general import copytree
 from aiida_vasp.parsers.file_parsers.stream import StreamParser
 
@@ -379,6 +379,16 @@ def outcar_parser(request):
     file_name = 'OUTCAR'
     path = data_path(request.param, file_name)
     parser = OutcarParser(file_path=path, settings=ParserSettings({}))
+    return parser
+
+
+@pytest.fixture()
+def neb_outcar_parser(request):
+    """Return an instance of OutcarParser for a reference OUTCAR."""
+    from aiida_vasp.parsers.settings import ParserSettings
+    file_name = 'OUTCAR'
+    path = data_path(request.param, file_name)
+    parser = VtstNEBOutcarParser(file_path=path, settings=ParserSettings({}))
     return parser
 
 

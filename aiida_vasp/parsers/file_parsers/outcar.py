@@ -281,8 +281,8 @@ class VtstNEBOutcarParser(OutcarParser):
         """
         Instantiate the parser
         """
-        super().__init__(*args, **kwargs)
         self._neb_data = {}
+        super().__init__(*args, **kwargs)
 
     def _init_outcar(self, path):
         """
@@ -325,7 +325,7 @@ class VtstNEBOutcarParser(OutcarParser):
             elif 'stress matrix after NEB project' in line:
                 stress = []
                 for isub in range(idx + 1, idx + 4):
-                    stress.append([float(tmp) for tmp in line.split()])
+                    stress.append([float(tmp) for tmp in lines[isub].split()])
                 vtst_data['stress_matrix'] = stress
             elif 'FORCES: max atom' in line:
                 forces = [float(tmp) for tmp in line.split()[-2:]]
@@ -341,6 +341,12 @@ class VtstNEBOutcarParser(OutcarParser):
                 vtst_data['stress_by_dimension'] = forces[1]
             elif 'OPT: skip step - force has converged' in line:
                 vtst_data['neb_converged'] = True
+            elif 'energy(sigma->0)' in line:
+                tokens = line.split()
+                vtst_data['energy_extrapolated'] = float(tokens[-1])
+                vtst_data['energy_without_entropy'] = float(tokens[-4])
+            elif 'free  energy   TOTEN' in line:
+                vtst_data['free_energy'] = float(line.split()[-2])
         self._neb_data = vtst_data
 
     @property

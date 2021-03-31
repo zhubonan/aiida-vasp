@@ -98,3 +98,17 @@ def test_parameter_results(fresh_aiida_env, outcar_parser):
     assert data_dict['run_stats']
     assert data_dict['run_stats']['total_cpu_time_used'] == 89.795
     assert data_dict['run_stats']['average_memory_used'] == 0.0
+
+
+@pytest.mark.parametrize('neb_outcar_parser', ['neb/01'], indirect=True)
+def test_neb(fresh_aiida_env, neb_outcar_parser):
+    """
+    Test that the parameter node is a ParametersData instance.
+
+    Should contain the symmetries and the elastic moduli.
+
+    """
+    data = neb_outcar_parser.neb_data
+    assert data['neb_converged']
+    assert data['force_prep_real'] == 0.02607
+    assert data['energy_extrapolated'] == -19.49540178
