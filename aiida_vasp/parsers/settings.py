@@ -10,7 +10,7 @@ from copy import deepcopy
 from aiida_vasp.parsers.file_parsers.doscar import DosParser
 from aiida_vasp.parsers.file_parsers.eigenval import EigParser
 from aiida_vasp.parsers.file_parsers.kpoints import KpointsParser
-from aiida_vasp.parsers.file_parsers.outcar import OutcarParser
+from aiida_vasp.parsers.file_parsers.outcar import OutcarParser, VtstNebOutcarParser
 from aiida_vasp.parsers.file_parsers.vasprun import VasprunParser
 from aiida_vasp.parsers.file_parsers.chgcar import ChgcarParser
 from aiida_vasp.parsers.file_parsers.wavecar import WavecarParser
@@ -36,6 +36,53 @@ FILE_PARSER_SETS = {
         },
         'OUTCAR': {
             'parser_class': OutcarParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'vasprun.xml': {
+            'parser_class': VasprunParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'CHGCAR': {
+            'parser_class': ChgcarParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'WAVECAR': {
+            'parser_class': WavecarParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'CONTCAR': {
+            'parser_class': PoscarParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'vasp_output': {
+            'parser_class': StreamParser,
+            'is_critical': False,
+            'status': 'Unkonwn'
+        }
+    },
+    'neb': {
+        'DOSCAR': {
+            'parser_class': DosParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'EIGENVAL': {
+            'parser_class': EigParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'IBZKPT': {
+            'parser_class': KpointsParser,
+            'is_critical': False,
+            'status': 'Unknown'
+        },
+        'OUTCAR': {
+            'parser_class': VtstNebOutcarParser,
             'is_critical': False,
             'status': 'Unknown'
         },
@@ -211,6 +258,7 @@ class ParserSettings(object):  # pylint: disable=useless-object-inheritance
         * quantities_to_parse: Collection of quantities in nodes_dict.
 
     """
+    NODES = NODES
 
     def __init__(self, settings, default_settings=None):
         if settings is None:
@@ -242,7 +290,7 @@ class ParserSettings(object):  # pylint: disable=useless-object-inheritance
         """Add a definition of node to the nodes dictionary."""
         if node_dict is None:
             # Try to get a node_dict from NODES.
-            node_dict = deepcopy(NODES.get(node_name, {}))
+            node_dict = deepcopy(self.NODES.get(node_name, {}))
 
         # Check, whether the node_dict contains required keys 'type' and 'quantities'
         for key in ['type', 'quantities']:
@@ -288,7 +336,7 @@ class ParserSettings(object):  # pylint: disable=useless-object-inheritance
                 continue
 
             node_name = key[4:]
-            node_dict = deepcopy(NODES.get(node_name, {}))
+            node_dict = deepcopy(self.NODES.get(node_name, {}))
 
             if isinstance(value, list):
                 node_dict['quantities'] = value

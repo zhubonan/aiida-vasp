@@ -117,6 +117,12 @@ class VaspParser(BaseParser):
         """Add a custom node to the settings."""
         self._settings.add_output_node(node_name, node_dict)
 
+    def _setup_parsable(self):
+
+        self._parsable_quantities.setup(retrieved_filenames=self._retrieved_content.keys(),
+                                        parser_definitions=self._definitions.parser_definitions,
+                                        quantity_names_to_parse=self._settings.quantity_names_to_parse)
+
     def parse(self, **kwargs):
         """The function that triggers the parsing of a calculation."""
 
@@ -129,9 +135,8 @@ class VaspParser(BaseParser):
             if file_name not in self._retrieved_content.keys() and value_dict['is_critical']:
                 return self.exit_codes.ERROR_CRITICAL_MISSING_FILE
 
-        self._parsable_quantities.setup(retrieved_filenames=self._retrieved_content.keys(),
-                                        parser_definitions=self._definitions.parser_definitions,
-                                        quantity_names_to_parse=self._settings.quantity_names_to_parse)
+        # Setup the parsable quantities
+        self._setup_parsable()
 
         # Parse the quantities from retrived files
         parsed_quantities, failed_to_parse_quantities = self._parse_quantities()

@@ -3,10 +3,10 @@ Parser for NEB calculations using VASP compiled with VTST
 """
 
 import traceback
-from copy import deepcopy
+from pathlib import Path
 
 from aiida.common.exceptions import NotExistent
-from aiida_vasp.parsers.settings import ParserSettings
+from aiida_vasp.parsers.settings import ParserSettings, ParserDefinitions
 from aiida_vasp.parsers.node_composer import NodeComposer, get_node_composer_inputs
 from aiida_vasp.parsers.vasp import VaspParser
 
@@ -24,7 +24,6 @@ NEB_NODES = {
         'quantities': [
             'notifications',
             'run_stats',
-            'version',
             'file_parser_warnings',
         ]
     },
@@ -73,17 +72,7 @@ class NEBSettings(ParserSettings):
     Settings for NEB calculations
     """
 
-    def add_output_node(self, node_name, node_dict=None):
-        """Add a definition of node to the nodes dictionary."""
-        if node_dict is None:
-            # Try to get a node_dict from NODES.
-            node_dict = deepcopy(NEB_NODES.get(node_name, {}))
-
-        # Check, whether the node_dict contains required keys 'type' and 'quantities'
-        for key in ['type', 'quantities']:
-            if node_dict.get(key) is None:
-                return
-        self._output_nodes_dict[node_name] = node_dict
+    NODES = NEB_NODES
 
 
 class VtstNebParser(VaspParser):
@@ -109,16 +98,24 @@ class VtstNebParser(VaspParser):
             parser_settings = calc_settings.get_dict().get('parser_settings')
 
         self._settings = NEBSettings(parser_settings, default_settings=DEFAULT_OPTIONS)
+        self._definitions = ParserDefinitions(file_parser_set='neb')
 
     def get_num_images(self):
         """
         Return the number of images
         """
         try:
-            nimages = self.inputs.parameters['incar']['images']
+            nimages = self.node.inputs.parameters['incar']['images']
         except KeyError:
             nimages = None
         return nimages
+
+    def _setup_parsable(self):
+        """Setup the parable quantities. For NEB calculations we collpase the folder structure"""
+        filenames = {Path(fname).name for fname in self._retrieved_content}
+        self._parsable_quantities.setup(retrieved_filenames=list(filenames),
+                                        parser_definitions=self._definitions.parser_definitions,
+                                        quantity_names_to_parse=self._settings.quantity_names_to_parse)
 
     def _parse_quantities(self):
         """
@@ -167,7 +164,8 @@ class VtstNebParser(VaspParser):
                 except Exception:  # pylint: disable=broad-except
                     parser = None
                     failed_to_parse_quantities.append(quantity_key)
-                    self.logger.warning('Cannot instantiate {}, exception {}:'.format(quantity_key, traceback.format_exc()))
+                    print('Cannot instantiate {} for {}, exception {}:'.format(file_parser_cls, quantity_key, traceback.format_exc()))
+                    #self.logger.warning('Cannot instantiate {}, exception {}:'.format(quantity_key, traceback.format_exc()))
 
                 file_parser_instances[file_parser_cls] = parser
 
@@ -186,7 +184,8 @@ class VtstNebParser(VaspParser):
             except Exception:  # pylint: disable=broad-except
                 parsed_quantity = None
                 failed_to_parse_quantities.append(quantity_key)
-                self.logger.warning('Error parsing {} from {}, exception {}:'.format(quantity_key, parser, traceback.format_exc()))
+                #self.logger.warning('Error parsing {} from {}, exception {}:'.format(quantity_key, parser, traceback.format_exc()))
+                print('Error parsing {} from {}, exception {}:'.format(quantity_key, parser, traceback.format_exc()))
 
             if parsed_quantity is not None:
                 parsed_quantities[quantity_key] = parsed_quantity
