@@ -24,7 +24,6 @@ NEB_NODES = {
         'quantities': [
             'notifications',
             'run_stats',
-            'file_parser_warnings',
         ]
     },
     'kpoints': {
@@ -130,13 +129,15 @@ class VtstNebParser(VaspParser):
 
         per_image_quantities = {}
         per_image_failed_quantities = {}
+        failed_quantities = []
 
         for image_idx in range(1, nimages + 1):
             quantities, failed = self._parse_quantities_for_image(image_idx)
             per_image_quantities[f'{image_idx:02d}'] = quantities
             per_image_failed_quantities[f'{image_idx:02d}'] = failed
+            failed_quantities.extend([f'image_{image_idx:02d}_{name}' for name in failed])
 
-        return per_image_quantities, per_image_failed_quantities
+        return per_image_quantities, failed_quantities
 
     # Override super class methods
     def _parse_quantities_for_image(self, image_idx):
@@ -151,6 +152,10 @@ class VtstNebParser(VaspParser):
         failed_to_parse_quantities = []
         for quantity_key in self._parsable_quantities.quantity_keys_to_parse:
             file_name = self._parsable_quantities.quantity_keys_to_filenames[quantity_key]
+
+            # Skip vasprun.xml file that does not exists for each image as of vasp 5.4.4
+            if file_name == 'vasprun.xml':
+                continue
 
             # Full path of the file, including the image folder
             file_path = f'{image_idx:02d}/' + file_name
@@ -273,7 +278,6 @@ class VtstNebParser(VaspParser):
 
         # Get the dictionary of equivalent quantities, and add a special quantity "parser_warnings"
         equivalent_quantity_keys = dict(self._parsable_quantities.equivalent_quantity_keys)
-        equivalent_quantity_keys.update({'file_parser_warnings': ['file_parser_warnings']})
 
         for node_name, node_dict in self._settings.output_nodes_dict.items():
             inputs = get_node_composer_inputs(equivalent_quantity_keys, parsed_quantities, node_dict['quantities'])

@@ -227,10 +227,13 @@ class VaspParser(BaseParser):
 
         # Get the dictionary of equivalent quantities, and add a special quantity "parser_warnings"
         equivalent_quantity_keys = dict(self._parsable_quantities.equivalent_quantity_keys)
-        equivalent_quantity_keys.update({'file_parser_warnings': ['file_parser_warnings']})
 
         for node_name, node_dict in self._settings.output_nodes_dict.items():
             inputs = get_node_composer_inputs(equivalent_quantity_keys, parsed_quantities, node_dict['quantities'])
+
+            # Special treatment for misc output
+            if node_name == 'misc':
+                inputs['file_parser_warnings'] = parsed_quantities['file_parser_warnings']
 
             # If the input is empty, we skip creating the node as it is bound to fail
             if not inputs:
