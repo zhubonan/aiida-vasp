@@ -26,9 +26,10 @@ class VaspNEBCalculation(VaspCalculation):
 
     Output of individual frames are placed in the corresponding namespace under the same convention.
     """
-    _VASP_OUTPUT = 'vasp_output'
+    # Use stdout as the name for the diverted stdout to be consistent with those in the image folders
+    _VASP_OUTPUT = 'stdout'
     _ALWAYS_RETRIEVE_LIST = ['OUTCAR', 'vasprun.xml', _VASP_OUTPUT]
-    _PER_IMAGE_ALWAYS_RETRIEVE_LIST = ['OUTCAR', 'CONTCAR']
+    _PER_IMAGE_ALWAYS_RETRIEVE_LIST = ['OUTCAR', 'CONTCAR', _VASP_OUTPUT]
     _query_type_string = 'vasp.neb'
     _plugin_type_string = 'vasp.neb'
     _default_parser = 'vasp.neb'
@@ -202,6 +203,9 @@ def image_folder_paths(image_folders, retrieve_names):
     retrieve_list = []
     for key in retrieve_names:
         for fdname in image_folders:
+            # Skip the stdout for the first image - it is diverted to the root folder
+            if int(fdname) == 1 and key == VaspNEBCalculation._VASP_OUTPUT:  # pylint: disable=protected-access
+                continue
             # Need to use the tuple format to keep the sub directory structure
             retrieve_list.append([fdname + '/' + key, '.', 2])
     return retrieve_list

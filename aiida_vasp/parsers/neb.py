@@ -66,6 +66,8 @@ DEFAULT_OPTIONS = {
     'add_site_magnetization': False,
 }
 
+_VASP_OUTPUT = 'stdout'
+
 
 class NEBSettings(ParserSettings):
     """
@@ -152,6 +154,11 @@ class VtstNebParser(VaspParser):
 
             # Full path of the file, including the image folder
             file_path = f'{image_idx:02d}/' + file_name
+
+            # Special case - for the stdout of the first image, we have to parse from the root stdout
+            if image_idx == 1 and file_name == _VASP_OUTPUT:
+                file_path = _VASP_OUTPUT
+
             file_parser_cls = self._definitions.parser_definitions[file_name]['parser_class']
 
             # If a parse object has been instantiated, use it.

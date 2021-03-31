@@ -121,9 +121,9 @@ def list_files_recursive(retrieved, top_level=''):
     """
     object_paths = []
     for obj in retrieved.list_objects(top_level):
-        if obj.type == FileType.FILE:
+        if obj.file_type == FileType.FILE:
             object_paths.append(os.path.join(top_level, obj.name))
-        elif obj.type == FileType.DIRECTORY:
+        elif obj.file_type == FileType.DIRECTORY:
             object_paths.extend(
                 [os.path.join(top_level, path) for path in list_files_recursive(retrieved, os.path.join(top_level, obj.name))])
 

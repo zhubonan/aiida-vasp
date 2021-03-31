@@ -106,7 +106,9 @@ FILE_PARSER_SETS = {
             'is_critical': False,
             'status': 'Unknown'
         },
-        'vasp_output': {
+        # The STDOUT is rename as 'stdout' for NEB calculations, this is because VASP itself
+        # divert STDOUT for each image to <ID>/stdout
+        'stdout': {
             'parser_class': StreamParser,
             'is_critical': False,
             'status': 'Unkonwn'
