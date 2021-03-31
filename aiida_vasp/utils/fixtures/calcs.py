@@ -88,7 +88,7 @@ def neb_calc_with_retrieved(localhost):
         settings.store()
 
         # Add inputs with the number of images
-        param = get_data_class('dict')(dict={'incar': {'images': nimgs}})
+        param = get_data_class('dict')(dict={'images': nimgs})
         node.add_incoming(param, link_type=LinkType.INPUT_CALC, link_label='parameters')
         param.store()
 

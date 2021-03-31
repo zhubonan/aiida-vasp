@@ -35,7 +35,7 @@ NEB_NODES = {
     'structure': {
         'link_name': 'structure',
         'type': 'structure',
-        'quantities': ['poscar-structure'],  # The output structures are parsed from the POSCAR
+        'quantities': ['structure'],
     },
     'chgcar': {
         'link_name': 'chgcar',
@@ -107,9 +107,9 @@ class VtstNebParser(VaspParser):
         Return the number of images
         """
         try:
-            nimages = self.node.inputs.parameters['incar']['images']
+            nimages = self.node.inputs.parameters['images']
         except KeyError:
-            nimages = None
+            raise ValueError('No `images` key defined in inputs - this is really an NEB calculation?')
         return nimages
 
     def _setup_parsable(self):
@@ -179,7 +179,6 @@ class VtstNebParser(VaspParser):
             # if the parser cannot be instantiated, add the quantity to a list of unavalaible ones
             if parser is None:
                 failed_to_parse_quantities.append(quantity_key)
-                parsed_quantities[quantity_key] = None
                 continue
 
             # The next line may still except for ill-formated file - some parser load all data at

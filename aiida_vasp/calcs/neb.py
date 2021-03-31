@@ -52,6 +52,12 @@ class VaspNEBCalculation(VaspCalculation):
         spec.input('final_structure',
                    valid_type=(get_data_class('structure'), get_data_class('cif')),
                    help='The input structure (POSCAR) for the final image.')
+        spec.input(
+            'metadata.options.withmpi',
+            valid_type=bool,
+            default=True,
+            help='Set the calculation to use mpi',
+        )
         spec.input_namespace('neb_images',
                              valid_type=(get_data_class('structure'), get_data_class('cif')),
                              help='Starting structure for the NEB images',
@@ -75,17 +81,27 @@ class VaspNEBCalculation(VaspCalculation):
 
         # Define outputs.
         # remote_folder and retrieved are passed automatically
-        spec.output_namespace('structure', required=True, valid_type=get_data_class('structure'), help='NEB images')
-        spec.output_namespace('chgcar', valid_type=get_data_class('vasp.chargedensity'), required=False, help='The output charge density.')
-        spec.output_namespace('kpoints', valid_type=get_data_class('array.kpoints'), required=False, help='Kpoints for each image.')
-        spec.output_namespace('misc', valid_type=get_data_class('dict'), required=True, help='Per-image misc output.')
+        spec.output_namespace('structure', required=True, valid_type=get_data_class('structure'), help='NEB images', dynamic=True)
+        spec.output_namespace('chgcar',
+                              valid_type=get_data_class('vasp.chargedensity'),
+                              required=False,
+                              help='The output charge density.',
+                              dynamic=True)
+        spec.output_namespace('kpoints',
+                              valid_type=get_data_class('array.kpoints'),
+                              required=False,
+                              help='Kpoints for each image.',
+                              dynamic=True)
+        spec.output_namespace('misc', valid_type=get_data_class('dict'), required=True, help='Per-image misc output.', dynamic=True)
         spec.output_namespace('wavecar',
                               valid_type=get_data_class('vasp.wavefun'),
                               required=False,
+                              dynamic=True,
                               help='The output file containing the plane wave coefficients.')
         spec.output_namespace('site_magnetization',
                               valid_type=get_data_class('dict'),
                               required=False,
+                              dynamic=True,
                               help='The output of the site magnetization for each image.')
         spec.output('neb_misc', valid_type=get_data_class('dict'), help='NEB related data combined for each image')
         spec.exit_code(0, 'NO_ERROR', message='the sun is shining')
@@ -172,7 +188,7 @@ class VaspNEBCalculation(VaspCalculation):
                 image_folder_paths(image_folders, set(self._PER_IMAGE_ALWAYS_RETRIEVE_LIST + additional_retrieve_temp_list)))
             calcinfo.retrieve_list.extend(image_folder_paths(image_folders, additional_retrieve_list))
 
-        self.logger.warning('Calcinfo: {}'.format(calcinfo))
+        #self.logger.warning('Calcinfo: {}'.format(calcinfo))
 
         return calcinfo
 

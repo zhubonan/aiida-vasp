@@ -302,6 +302,8 @@ class VtstNebOutcarParser(OutcarParser):
         # A file-like object
         elif hasattr(path, 'readlines'):
             lines = path.readlines()
+        else:
+            raise ValueError("'path' variable is not supported: {}".format(path))
 
         vtst_data = {'neb_converged': False}
         for idx, line in enumerate(lines):

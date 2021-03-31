@@ -195,7 +195,6 @@ class VaspParser(BaseParser):
             # if the parser cannot be instantiated, add the quantity to a list of unavalaible ones
             if parser is None:
                 failed_to_parse_quantities.append(quantity_key)
-                parsed_quantities[quantity_key] = None
                 continue
 
             # The next line may still except for ill-formated file - some parser load all data at
