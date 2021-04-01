@@ -140,6 +140,23 @@ def vasp_calc(vasp_inputs):
 
 
 @pytest.fixture()
+def vasp_neb_calc(vasp_neb_inputs):
+    """An instance of a VaspCalculation Process."""
+    from aiida_vasp.calcs.neb import VaspNEBCalculation
+
+    def inner(inputs=None, settings=None):
+
+        if inputs is None:
+            inputs = vasp_neb_inputs(settings)
+        manager = get_manager()
+        runner = manager.get_runner()
+
+        return instantiate_process(runner, VaspNEBCalculation, **inputs)
+
+    return inner
+
+
+@pytest.fixture()
 def vasp2w90_calc(vasp_inputs):
     """An instance of a VaspCalculation Process."""
     from aiida_vasp.calcs.vasp2w90 import Vasp2w90Calculation

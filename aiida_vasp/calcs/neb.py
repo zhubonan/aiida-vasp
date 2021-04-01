@@ -3,8 +3,10 @@ Module for settings up NEB calculations
 """
 from pathlib import Path
 
-from aiida_vasp.utils.aiida_utils import get_data_class
-from aiida_vasp.calcs.vasp import VaspCalculation
+from aiida.common.exceptions import InputValidationError
+
+from aiida_vasp.utils.aiida_utils import get_data_class, get_data_node
+from aiida_vasp.calcs.vasp import VaspCalculation, ordered_unique_list
 from aiida_vasp.parsers.file_parsers.poscar import PoscarParser
 
 
@@ -38,6 +40,8 @@ class VaspNEBCalculation(VaspCalculation):
     def define(cls, spec):
 
         super(VaspNEBCalculation, cls).define(spec)
+        # NEB calculation does not have the structure input port
+        spec.inputs.pop('structure')
 
         # Define the inputs.
         # options is passed automatically.
@@ -210,6 +214,35 @@ class VaspNEBCalculation(VaspCalculation):
             options = None
         poscar_parser = PoscarParser(data=structure, precision=poscar_precision, options=options)
         poscar_parser.write(dst)
+
+    def _structure(self):
+        """
+        Get the input structure as AiiDa StructureData.
+
+        This is required in order to support CifData as input as well.
+        """
+        structure = self.inputs.initial_structure
+        if not hasattr(structure, 'get_pymatgen'):
+            structure = get_data_node('structure', ase=structure.get_ase())
+        return structure
+
+    def verify_inputs(self):
+        """
+        Verify the order of elements
+        """
+        super().verify_inputs()
+        last_order = None
+        last_num_atoms = None
+        for structure in list(self.inputs.neb_images.values()) + [self.inputs.initial_structure, self.inputs.final_structure]:
+            atoms = structure.get_ase()
+            order = ordered_unique_list(atoms.get_chemical_symbols())
+            num_atoms = len(atoms)
+            if last_order is not None and order != last_order:
+                raise InputValidationError('The input structures have non-euqal element orders.')
+            if last_order is not None and num_atoms != last_num_atoms:
+                raise InputValidationError('The input structures have non-equal number of atoms.')
+            last_order = order
+            last_num_atoms = num_atoms
 
 
 def image_folder_paths(image_folders, retrieve_names):

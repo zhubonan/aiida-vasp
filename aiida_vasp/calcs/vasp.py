@@ -181,9 +181,12 @@ class VaspCalculation(VaspCalcBase):
             self._prestore()
 
     def _prestore(self):
-        """Set attributes prior to storing."""
+        """
+        Set attributes prior to storing.
+        BONAN: Is this used in any case??
+        """
         super(VaspCalculation, self)._prestore()
-        setattr(self, 'elements', ordered_unique_list(self.inputs.structure.get_ase().get_chemical_symbols()))
+        setattr(self, 'elements', ordered_unique_list(self._structure().get_ase().get_chemical_symbols()))
 
     @property
     def _parameters(self):

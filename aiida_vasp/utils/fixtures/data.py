@@ -269,6 +269,46 @@ def vasp2w90_inputs(
 
 
 @pytest.fixture()
+def vasp_neb_inputs(fresh_aiida_env, vasp_params, vasp_kpoints, vasp_structure, potentials, vasp_code):
+    """Inputs dictionary for CalcJob Processes."""
+    from aiida.orm import Dict
+
+    def inner(settings=None, parameters=None):
+
+        inputs = AttributeDict()
+
+        metadata = AttributeDict({'options': {'resources': {'num_machines': 1, 'num_mpiprocs_per_machine': 1}}})
+
+        if settings is not None:
+            inputs.settings = Dict(dict=settings)
+
+        if isinstance(parameters, dict):
+            parameters = get_data_class('dict')(dict=parameters)
+
+        if parameters is None:
+            parameters = AttributeDict(vasp_params.get_dict())
+            parameters['images'] = 3
+            parameters = get_data_class('dict')(dict=parameters)
+
+        inputs.code = vasp_code
+        inputs.metadata = metadata
+        inputs.parameters = parameters
+        inputs.kpoints, _ = vasp_kpoints
+
+        inputs.initial_structure = vasp_structure
+        inputs.final_structure = vasp_structure
+
+        inputs.potential = potentials
+
+        neb_images = {f'images_{idx:02d}': vasp_structure for idx in range(1, 4)}
+        inputs.neb_images = neb_images
+
+        return inputs
+
+    return inner
+
+
+@pytest.fixture()
 def vasp_code(localhost):
     """Fixture for a vasp code, the executable it points to does not exist."""
     from aiida.orm import Code
