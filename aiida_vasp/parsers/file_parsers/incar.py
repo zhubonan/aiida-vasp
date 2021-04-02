@@ -4,8 +4,8 @@ INCAR parser.
 -------------
 The file parser that handles the parsing of INCAR files.
 """
-from parsevasp.incar import Incar
 from aiida.common import InputValidationError
+from parsevasp.incar import Incar
 
 from aiida_vasp.parsers.file_parsers.parser import BaseFileParser
 from aiida_vasp.utils.aiida_utils import get_data_class
@@ -63,7 +63,7 @@ class IncarParser(BaseFileParser):
         incar_dict = self._data_obj.get_dict()
 
         try:
-            return Incar(incar_dict=incar_dict, logger=self._logger)
+            return Incar(incar_dict=incar_dict, logger=self._logger, validate_tags=False)
         except SystemExit as error:
             raise InputValidationError(error.args[0])
 
@@ -77,7 +77,7 @@ class IncarParser(BaseFileParser):
             return {'incar': self._data_obj}
 
         try:
-            incar = Incar(file_path=self._data_obj.path, logger=self._logger)
+            incar = Incar(file_path=self._data_obj.path, logger=self._logger, validate_tags=False)
         except SystemExit:
             self._logger.warning('Parsevasp exitited abnormally. Returning None.')
             return {'incar': None}

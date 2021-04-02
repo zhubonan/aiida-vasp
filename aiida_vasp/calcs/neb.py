@@ -85,6 +85,10 @@ class VaspNEBCalculation(VaspCalculation):
 
         # Define outputs.
         # remote_folder and retrieved are passed automatically
+
+        # Turn on dynamic outputs to avoid problem when catching is used
+        # it appears the catching implementation does not work with calcjobs with namespace outputs
+        spec.outputs.dynamic = True
         spec.output_namespace('structure', required=True, valid_type=get_data_class('structure'), help='NEB images', dynamic=True)
         spec.output_namespace('chgcar',
                               valid_type=get_data_class('vasp.chargedensity'),

@@ -4,10 +4,12 @@ VASP NEB workchain.
 ---------------
 Contains the VaspNEBWorkChain class definition which uses the BaseRestartWorkChain.
 """
+#pylint: disable=too-many-branches, too-many-statements
 import numpy as np
 from aiida.engine import while_
 from aiida import orm
 
+from aiida.common.lang import override
 from aiida.common.extendeddicts import AttributeDict
 from aiida.common.exceptions import NotExistent, InputValidationError
 from aiida.plugins import CalculationFactory
@@ -39,7 +41,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
     @classmethod
     def define(cls, spec):
         super(VaspNEBWorkChain, cls).define(spec)
-        spec.expose_inputs(cls._process_class, exclude=('potential', 'kpoints'))
+        spec.expose_inputs(cls._process_class, exclude=('potential', 'kpoints', 'dynamics', 'metadata'))
         spec.input('kpoints', valid_type=get_data_class('array.kpoints'), required=False)
         spec.input('kpoints_spacing', valid_type=get_data_class('float'), required=False)
         spec.input('potential_family', valid_type=get_data_class('str'), required=True)
@@ -94,12 +96,13 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             cls.results,
         )  # yapf: disable
 
-        spec.expose_outputs(cls._calculation)
+        spec.expose_outputs(cls._process_class)
         spec.exit_code(0, 'NO_ERROR', message='the sun is shining')
         spec.exit_code(700, 'ERROR_NO_POTENTIAL_FAMILY_NAME', message='the user did not supply a potential family name')
         spec.exit_code(701, 'ERROR_POTENTIAL_VALUE_ERROR', message='ValueError was returned from get_potcars_from_structure')
         spec.exit_code(702, 'ERROR_POTENTIAL_DO_NOT_EXIST', message='the potential does not exist')
         spec.exit_code(703, 'ERROR_IN_PARAMETER_MASSAGER', message='the exception: {exception} was thrown while massaging the parameters')
+        spec.exit_code(501, 'SUB_NEB_CALCULATION_ERROR', message='Unrecoverable error in launched NEB calculations.')
 
     def setup(self):
 
@@ -112,10 +115,14 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         self.ctx.neb_images = self.inputs.neb_images
 
         # Handle and convert additional inputs and store them in self.ctx.inputs
-        self._setup_vasp_inputs()
+        exit_code = self._setup_vasp_inputs()
+        if exit_code is not None:
+            return exit_code
 
         # Sanity checks
         self._check_neb_inputs()
+        self.report('In SETUP, context metadata {}'.format(self.ctx.inputs))
+        return None
 
     # def prepare_inputs(self):
     #     """
@@ -136,7 +143,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         if 'neb_misc' not in node.outputs:
             self.report('Cannot found the `neb_misc` output containing the NEB run data')
             return None
-        neb_misc = node.outputs.neb_misc
+        neb_misc = node.outputs.neb_misc.get_dict()
 
         if not neb_misc.get('neb_data'):
             self.report('Cannot found the `neb_data` dictioanry containing the NEB run data')
@@ -147,7 +154,11 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         converged = [tmp['neb_converged'] for tmp in neb_data.values()]
         if not all(converged):
             self.report('At least one image is not converged in the run. Restart required.')
-            self._attach_output_structure(node)
+
+            # Attach images
+            out = self._attach_output_structure(node)
+            if out is not None:
+                return out
 
             return ProcessHandlerReport()
         return None
@@ -173,7 +184,9 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         if not all(finished):
             self.report('At least one image did not reach the end of VASP execution.')
 
-            self._attach_output_structure(node)
+            out = self._attach_output_structure(node)
+            if out is not None:
+                return out
 
             # No further process handling is needed
             return ProcessHandlerReport(do_break=True)
@@ -188,7 +201,13 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         for key in node.outputs:
             if key.startswith('structure__'):
                 output_images[key.split('__')[1]] = node.outputs[key]
+        nout = len(output_images)
+        nexists = len(self.inputs.neb_images)
+        if nout != nexists:
+            self.report('Number of parsed images: {} does not equal to the images need to restart: {}.'.format(nout, nexists))
+            return ProcessHandlerReport(do_break=True, exit_code=self.exit_codes.SUB_NEB_CALCULATION_ERROR)  # pylint: disable=no-member
         self.ctx.inputs.neb_images = output_images
+        return None
 
     def _check_neb_inputs(self):
         """
@@ -197,7 +216,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         This method is called once by ``self.setup``
         """
 
-        incar = self.inputs.parameters.get_dict()
+        incar = self.ctx.inputs.parameters
 
         images = incar.get('images')
 
@@ -268,7 +287,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             raise InputValidationError("Must supply either 'kpoints' or 'kpoints_spacing' or 'kpoints_spacing_vasp")
 
         # Set settings
-        unsupported_parameters = []
+        unsupported_parameters = {'iopt': 'TAG for VTST'}
         if 'settings' in self.inputs:
             self.ctx.inputs.settings = self.inputs.settings
             # Also check if the user supplied additional tags that is not in the supported file.
@@ -279,7 +298,6 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
 
         # Perform inputs massage to accommodate generalization in higher lying workchains
         # and set parameters.
-        unsupported_parameters += ['iopt']
         try:
             parameters_massager = ParametersMassage(self.inputs.parameters, unsupported_parameters)
         except Exception as exception:  # pylint: disable=broad-except
@@ -322,12 +340,15 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             # Set MPI to True, unless the user specifies otherwise
             withmpi = self.ctx.inputs.metadata['options'].get('withmpi', True)
             self.ctx.inputs.metadata['options']['withmpi'] = withmpi
+        else:
+            raise InputValidationError('`options` not supplied')
 
         # Utilise default input/output selections
         self.ctx.inputs.metadata['options']['input_filename'] = 'INCAR'
 
         # Set the CalcJobNode to have the same label as the WorkChain
         self.ctx.inputs.metadata['label'] = self.inputs.metadata.get('label', '')
+        self.report(self.ctx.inputs.metadata)
 
         # Verify and set potentials (potcar)
         if not self.inputs.potential_family.value:
@@ -346,6 +367,25 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
 
         self.ctx.verbose = bool(self.inputs.get('verbose', self._verbose))
 
+        return None
+
+    @override
+    def results(self):
+        """Attach the outputs specified in the output specification from the last completed process."""
+        node = self.ctx.children[self.ctx.iteration - 1]
+
+        # We check the `is_finished` attribute of the work chain and not the successfulness of the last process
+        # because the error handlers in the last iteration can have qualified a "failed" process as satisfactory
+        # for the outcome of the work chain and so have marked it as `is_finished=True`.
+        max_iterations = self.inputs.max_iterations.value  # type: ignore[union-attr]
+        if not self.ctx.is_finished and self.ctx.iteration >= max_iterations:
+            self.report(f'reached the maximum number of iterations {max_iterations}: ' f'last ran {self.ctx.process_name}<{node.pk}>')
+            return self.exit_codes.ERROR_MAXIMUM_ITERATIONS_EXCEEDED  # pylint: disable=no-member
+
+        self.report(f'work chain completed after {self.ctx.iteration} iterations')
+
+        # Simply attach the output of the last children
+        self.out_many({key: node.outputs[key] for key in node.outputs})
         return None
 
 
