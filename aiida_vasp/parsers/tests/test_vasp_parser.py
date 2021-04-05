@@ -221,10 +221,7 @@ def test_parser_exception(request, calc_with_retrieved):
         'parser_settings': {
             'add_bands': True,
             'add_kpoints': True,
-            'add_misc': [
-                'total_energies',
-                'maximum_force',
-            ]
+            'add_misc': ['total_energies', 'maximum_force', 'run_status', 'run_stats']
         }
     }
 

@@ -40,6 +40,29 @@ DEFAULT_OPTIONS = {
     'add_site_magnetization': False,
 }
 
+CRITICAL_NOTIFICATIONS = [
+    'brmix',
+    'cnormn',
+    'denmp',
+    'dentet',
+    'edddav_zhegv',
+    'eddrmm_zhegv',
+    'edwav',
+    'fexcp',
+    'fock_acc',
+    'non_collinear',
+    'not_hermitian',
+    'psmaxn',
+    'pzstein',
+    'real_optlay',
+    'rhosyg',
+    'rspher',
+    'set_indpw_full',
+    'sgrcon',
+    'no_potimm',
+    'magmom',
+]
+
 
 class VaspParser(BaseParser):
     """
@@ -123,7 +146,7 @@ class VaspParser(BaseParser):
                                         parser_definitions=self._definitions.parser_definitions,
                                         quantity_names_to_parse=self._settings.quantity_names_to_parse)
 
-    def parse(self, **kwargs):
+    def parse(self, **kwargs):  # pylint: disable=too-many-return-statements
         """The function that triggers the parsing of a calculation."""
 
         self._file_parse_exit_codes = {}
@@ -147,6 +170,11 @@ class VaspParser(BaseParser):
 
         # Compose the output nodes using the parsed quantities
         nodes_failed_to_create = self._compose_nodes(parsed_quantities)
+
+        # Check for execution related errors
+        exit_code = self._check_vasp_errors(parsed_quantities)
+        if exit_code is not None:
+            return exit_code
 
         # Deal with missing quantities
         if failed_to_parse_quantities:
@@ -231,9 +259,8 @@ class VaspParser(BaseParser):
         for node_name, node_dict in self._settings.output_nodes_dict.items():
             inputs = get_node_composer_inputs(equivalent_quantity_keys, parsed_quantities, node_dict['quantities'])
 
-            # Special treatment for misc output
             if node_name == 'misc':
-                inputs['file_parser_warnings'] = parsed_quantities['file_parser_warnings']
+                inputs['file_parser_warnings'] = parsed_quantities.get('file_parser_warnings')
 
             # If the input is empty, we skip creating the node as it is bound to fail
             if not inputs:
@@ -265,3 +292,36 @@ class VaspParser(BaseParser):
                 'message': exit_code.message,
             }
         return warnings
+
+    def _check_vasp_errors(self, quantities):
+        """
+        Detect simple vasp execution problems and returns the exit_codes to be set
+        """
+
+        if 'run_status' not in quantities:
+            return self.exit_codes.ERROR_DIAGNOSIS_OUTPUTS_MISSING
+        run_status = quantities['run_status']
+
+        # Return errors related to execution and convergence problems.
+        # Note that the order is important here - if a calculation is not finished, we cannot
+        # comment on wether properties are converged are not.
+
+        if run_status['finished'] is False:
+            return self.exit_codes.ERROR_DID_NOT_FINISH
+
+        if run_status['electronic_converged'] is False:
+            return self.exit_codes.ERROR_ELECTRONIC_NOT_CONVERGED
+
+        if run_status['ionic_converged'] is False:
+            return self.exit_codes.ERROR_IONIC_NOT_CONVERGED
+
+        # Check for the existence of critical warnings
+        if 'notifications' in quantities:
+            notifications = quantities['notifications']
+            for item in notifications:
+                if item['name'] in CRITICAL_NOTIFICATIONS:
+                    return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=item['message'])
+        else:
+            self.logger.warning('WARNING: missing notification output for VASP warnings and errors.')
+
+        return None

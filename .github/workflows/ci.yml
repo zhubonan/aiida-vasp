@@ -42,7 +42,7 @@ jobs:
           - 5672:5672
     strategy:
       matrix:
-        python: ['3.6', '3.7', '3.8']
+        python: ['3.7', '3.8', '3.9']
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python
@@ -69,8 +69,7 @@ jobs:
         if: ${{ matrix.python }} == '3.8'
         run: pip install coveralls
       - name: Install AiiDA
-        run: pip install -e git+https://github.com/zhubonan/aiida-core@temp-test-fix#egg=aiida-core
-        #run: pip install aiida-core
+        run: pip install aiida-core==1.6.1
       - name: Install AiiDA-Wannier90
         run: pip install -e git+https://github.com/aiidateam/aiida-wannier90#egg=aiida-wannier90
       - name: Install AiiDA-VASP
