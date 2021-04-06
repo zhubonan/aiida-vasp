@@ -248,6 +248,15 @@ class VaspNEBCalculation(VaspCalculation):
             last_order = order
             last_num_atoms = num_atoms
 
+    def write_incar(self, dst, validate_tags=True):  # pylint: disable=unused-argument
+        """
+        Write the INCAR without tag validation.
+        Validation is performed at `parsevasp` level and VTST tags are not included.
+
+        :param dst: absolute path of the file to write to
+        """
+        super().write_incar(dst, validate_tags=validate_tags)
+
 
 def image_folder_paths(image_folders, retrieve_names):
     """

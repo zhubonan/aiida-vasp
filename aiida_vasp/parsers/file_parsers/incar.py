@@ -40,6 +40,7 @@ class IncarParser(BaseFileParser):
         super(IncarParser, self).__init__(*args, **kwargs)
         if 'data' in kwargs:
             self._init_incar(kwargs['data'])
+        self._validate_tags = kwargs.get('validate_tags', True)
 
     def _init_incar(self, data):
         """Initialize with a given AiiDA Dict instance."""
@@ -63,7 +64,7 @@ class IncarParser(BaseFileParser):
         incar_dict = self._data_obj.get_dict()
 
         try:
-            return Incar(incar_dict=incar_dict, logger=self._logger, validate_tags=False)
+            return Incar(incar_dict=incar_dict, logger=self._logger, validate_tags=self._validate_tags)
         except SystemExit as error:
             raise InputValidationError(error.args[0])
 

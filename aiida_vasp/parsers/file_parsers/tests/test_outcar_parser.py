@@ -153,5 +153,5 @@ def test_neb(fresh_aiida_env, neb_outcar_parser):
     """
     data = neb_outcar_parser.neb_data
     assert data['neb_converged']
-    assert data['force_prep_real'] == 0.02607
-    assert data['energy_extrapolated'] == -19.4954017
+    assert data['force_prep_real'] == 0.017467
+    assert data['energy_extrapolated'] == -19.49550593
