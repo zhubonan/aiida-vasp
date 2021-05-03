@@ -1,6 +1,7 @@
 """
 Module for settings up NEB calculations
 """
+import os
 from pathlib import Path
 
 from aiida.common.exceptions import InputValidationError
@@ -205,6 +206,35 @@ class VaspNEBCalculation(VaspCalculation):
         #self.logger.warning('Calcinfo: {}'.format(calcinfo))
 
         return calcinfo
+
+    def remote_copy_restart_folder(self):
+        """
+        Add all files required for restart to the list of files to be copied from the previous calculation.
+
+        For NEB calculations, the CHGCAR and WAVECAR needs to be copied for each of the actual images.
+        """
+        restart_folder = self.inputs.restart_folder
+        computer = self.node.computer
+        included = ['CHGCAR', 'WAVECAR']
+        nimages = len(self.inputs.neb_images)
+        copy_list = []
+        for image_id in range(1, nimages + 1):
+            fdname = f'{image_id:02d}'
+
+            existing_files = restart_folder.listdir(fdname)
+            for name in included:
+                if name not in existing_files:
+                    # Here we simple issue an warning as the requirement of files will be explicitly checked by
+                    # `write_additional` method
+                    self.report('WARNING: File {} does not exist in the restart folder.'.format(name))
+                else:
+                    copy_list.append((
+                        computer.uuid,
+                        os.path.join(restart_folder.get_remote_path(), fdname, name),
+                        os.path.join(fdname, name),
+                    ))
+
+        return copy_list
 
     def write_neb_poscar(self, structure, dst, positions_dof=None):  # pylint: disable=unused-argument
         """
