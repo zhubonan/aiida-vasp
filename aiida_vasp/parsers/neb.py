@@ -8,7 +8,7 @@ from pathlib import Path
 from aiida.common.exceptions import NotExistent
 from aiida_vasp.parsers.settings import ParserSettings, ParserDefinitions
 from aiida_vasp.parsers.node_composer import NodeComposer, get_node_composer_inputs
-from aiida_vasp.parsers.vasp import VaspParser
+from aiida_vasp.parsers.vasp import VaspParser, CRITICAL_NOTIFICATIONS
 
 # pylint: disable=no-member
 
@@ -24,6 +24,7 @@ NEB_NODES = {
         'quantities': [
             'notifications',
             'run_stats',
+            'run_status',
         ]
     },
     'kpoints': {
@@ -304,3 +305,42 @@ class VtstNebParser(VaspParser):
                 self.out(f'{link_name}.image_{image_idx:02d}', aiida_node)
 
         return nodes_failed_to_create
+
+    def _check_vasp_errors(self, quantities):
+        """
+        Detect simple vasp execution problems and returns the exit_codes to be set
+        """
+
+        # Check if some diagnosis information is missing
+        neb_data_list = [image.get('neb_data') for image in quantities.values()]
+        run_status_list = [image.get('run_status') for image in quantities.values()]
+
+        if any(data is None for data in neb_data_list) or any(data is None for data in run_status_list):
+            return self.exit_codes.ERROR_DIAGNOSIS_OUTPUTS_MISSING
+
+        # Return errors related to execution and convergence problems.
+        # Note that the order is important here - if a calculation is not finished, we cannot
+        # comment on wether properties are converged are not.
+        # Here we only check for the first frame
+        if any(run_status['finished'] is False for run_status in run_status_list):
+            return self.exit_codes.ERROR_DID_NOT_FINISH
+
+        if run_status_list[0]['electronic_converged'] is False:
+            return self.exit_codes.ERROR_ELECTRONIC_NOT_CONVERGED
+
+        # Check the ionic convergence issues - the system is converged only if all image are "neb converged"
+        if not all(per_image.get('neb_converged', False) for per_image in neb_data_list):
+            if self._check_ionic_convergence:
+                return self.exit_codes.ERROR_IONIC_NOT_CONVERGED
+            self.logger.warning('The NEB calculation is not converged, but the calcualtion is treated as successful.')
+
+        # Check for the existence of critical warnings. This is performed for all images.
+        all_notifications = []
+        for image in quantities.values():
+            all_notifications.extend(image.get('notifications', []))
+
+        for item in all_notifications:
+            if item['name'] in CRITICAL_NOTIFICATIONS:
+                return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=item['message'])
+
+        return None

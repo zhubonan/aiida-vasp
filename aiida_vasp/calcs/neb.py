@@ -130,6 +130,12 @@ class VaspNEBCalculation(VaspCalculation):
             'the vasprun.xml was truncated and recovery parsing failed to parse at least one of the requested quantities: {quantities}, '
             'very likely the VASP calculation did not run properly')
 
+        spec.exit_code(
+            704,
+            'ERROR_DIAGNOSIS_OUTPUTS_MISSING',
+            message=
+            'Outputs for diagosis are missing, please make sure the `neb_data` and `run_status` quantities are requested for parsing.')
+
     def prepare_for_submission(self, tempfolder):
         """
         Add all files to the list of files to be retrieved.

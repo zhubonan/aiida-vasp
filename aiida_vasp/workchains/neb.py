@@ -19,6 +19,7 @@ from aiida_vasp.utils.aiida_utils import get_data_class, get_data_node
 from aiida_vasp.utils.workchains import compose_exit_code
 from aiida_vasp.assistant.parameters import ParametersMassage
 from aiida_vasp.parsers.file_parsers.potcar import MultiPotcarIo
+from aiida_vasp.calcs.neb import VaspNEBCalculation
 
 
 class VaspNEBWorkChain(BaseRestartWorkChain):
@@ -132,7 +133,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
     #     # Applied the staged NEB images
     #     self.ctx.inputs.neb_images = self.ctx.neb_images
 
-    @process_handler(priority=50)
+    @process_handler(priority=500, exit_codes=[VaspNEBCalculation.exit_codes.ERROR_IONIC_NOT_CONVERGED])  # pylint: disable=no-member
     def handle_unconverged(self, node):
         """
         Handle the problem where the NEB optimisation is not converged.
@@ -163,7 +164,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             return ProcessHandlerReport()
         return None
 
-    @process_handler(priority=100)
+    @process_handler(priority=900, exit_codes=[VaspNEBCalculation.exit_codes.ERROR_DID_NOT_FINISH])  # pylint: disable=no-member
     def handle_unfinished(self, node):
         """
         Handle the case where the calculations is not fully finished.
