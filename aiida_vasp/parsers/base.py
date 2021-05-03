@@ -4,9 +4,11 @@ Common code for parsers.
 ------------------------
 """
 import os
+from pathlib import Path
 
 from aiida.parsers.parser import Parser
 from aiida.common.exceptions import NotExistent
+from aiida.repository.common import FileType
 
 
 class BaseParser(Parser):
@@ -37,16 +39,16 @@ class BaseParser(Parser):
         exit_code_permanent = self._check_folder()
         if exit_code_permanent is None:
             # Retrieved folder exists, add content and tag to dictionary
-            for retrieved_file in self.retrieved.list_objects():
-                retrieved[retrieved_file.name] = {'path': '', 'status': 'permanent'}
+            for retrieved_file_name in list_files_recursive(self.retrieved):
+                retrieved[retrieved_file_name] = {'path': '', 'status': 'permanent'}
 
         exit_code_temporary = None
         if parser_kwargs is not None:
             exit_code_temporary = self._set_retrieved_temporary(parser_kwargs)
             if exit_code_temporary is None:
                 # Retrieved_temporary folder exists, add content and tag to dictionary
-                for retrieved_file in os.listdir(self._retrieved_temporary):
-                    retrieved[retrieved_file] = {'path': self._retrieved_temporary, 'status': 'temporary'}
+                for retrieved_file_path in Path(self._retrieved_temporary).glob('**/*'):
+                    retrieved[str(retrieved_file_path)] = {'path': self._retrieved_temporary, 'status': 'temporary'}
 
         # Check if there are other files than the AiiDA generated scheduler files in retrieved and
         # if there are any files in the retrieved_temporary. If not, return an error.
@@ -111,3 +113,18 @@ class BaseParser(Parser):
                     return None
         except KeyError:
             return None
+
+
+def list_files_recursive(retrieved, top_level=''):
+    """
+    Recursively list the content of a retrieved FolderData node.
+    """
+    object_paths = []
+    for obj in retrieved.list_objects(top_level):
+        if obj.file_type == FileType.FILE:
+            object_paths.append(os.path.join(top_level, obj.name))
+        elif obj.file_type == FileType.DIRECTORY:
+            object_paths.extend(
+                [os.path.join(top_level, path) for path in list_files_recursive(retrieved, os.path.join(top_level, obj.name))])
+
+    return object_paths
