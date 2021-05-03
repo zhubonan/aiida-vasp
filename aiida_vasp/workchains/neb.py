@@ -276,12 +276,12 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             self.ctx.inputs.kpoints = self.inputs.kpoints
         elif 'kpoints_spacing' in self.inputs:
             kpoints = orm.KpointsData()
-            kpoints.set_cell_from_structure(self.ctx.inputs.structure)
+            kpoints.set_cell_from_structure(self.ctx.inputs.initial_structure)
             kpoints.set_kpoints_mesh_from_density(self.inputs.kpoints_spacing.value * np.pi * 2)
             self.ctx.inputs.kpoints = kpoints
         elif 'kpoints_spacing_vasp' in self.inputs:
             kpoints = orm.KpointsData()
-            kpoints.set_cell_from_structure(self.ctx.inputs.structure)
+            kpoints.set_cell_from_structure(self.ctx.inputs.initial_structure)
             kpoints.set_kpoints_mesh_from_density(self.inputs.kpoints_spacing.value)
             self.ctx.inputs.kpoints = kpoints
         else:
@@ -316,7 +316,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         # Setup LDAU keys
         if 'ldau_mapping' in self.inputs:
             ldau_settings = self.inputs.ldau_mapping.get_dict()
-            ldau_keys = get_ldau_keys(self.ctx.inputs.structure, **ldau_settings)
+            ldau_keys = get_ldau_keys(self.ctx.inputs.initial_structure, **ldau_settings)
             # Directly update the raw inputs passed to VaspCalculation
             self.ctx.inputs.parameters.update(ldau_keys)
 
