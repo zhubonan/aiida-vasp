@@ -640,16 +640,16 @@ class ParserSettingsChecker:
                 isif = 0
 
         if isif == 0:
-            raise InputValidationError(f'Requested to parse <maximum_stress> but it would not be calculated due to ISIF settings.')
+            raise InputValidationError('Requested to parse <maximum_stress> but it would not be calculated due to ISIF settings.')
 
     def check_wavecar_chgcar(self):
         """Check if WAVECAR CHGCAR are set to be written"""
 
         if 'wavecar' in self.quantities and not self.parameters.get('lwave', True):
-            raise InputValidationError(f'Requested to retrieve <WAVECAR> but it not set to be written.')
+            raise InputValidationError('Requested to retrieve <WAVECAR> but it not set to be written.')
 
         if 'chgcar' in self.quantities and not self.parameters.get('lwave', True):
-            raise InputValidationError(f'Requested to retrieve <CHGCAR> but it not set to be written.')
+            raise InputValidationError('Requested to retrieve <CHGCAR> but it not set to be written.')
 
     def check_born_charges(self):
         """Check if projectors can be parsed"""
@@ -658,11 +658,11 @@ class ParserSettingsChecker:
 
         lepsilon = self.parameters.get('lepsilon', False)
         if not lepsilon:
-            raise InputValidationError(f'Requested to parse "born_charges"/"dielectrics" but they are not going to be calculated.')
+            raise InputValidationError('Requested to parse "born_charges"/"dielectrics" but they are not going to be calculated.')
 
     def check_dynmat(self):
         if 'hessian' not in self.quantities and 'dynmat' not in self.quantities:
             return
         ibrion = self.parameters.get('ibrion', -1)
         if ibrion not in [5, 6, 7, 8]:
-            raise InputValidationError(f'Requsted to parse "hessian"/"dynmat" but they are not going to be calculated.')
+            raise InputValidationError('Requsted to parse "hessian"/"dynmat" but they are not going to be calculated.')

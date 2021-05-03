@@ -21,6 +21,25 @@ from aiida_vasp.assistant.parameters import ParametersMassage
 from aiida_vasp.parsers.file_parsers.potcar import MultiPotcarIo
 from aiida_vasp.calcs.neb import VaspNEBCalculation
 
+# Additional tags for VTST calculations - these are not the tags used by standard VASP
+VTST_ADDITIONAL_TAGS = {
+    'iopt': 'TAG for VTST',
+    'maxmove': 'Maximum ionic movement',
+    'ilbfgsmem': 'Number of steps saved when building the inverse Hessian matrix',
+    'lglobal': 'Optimize the NEB globally instead of image-by-image',
+    'lautoscale': 'Automatically determines INVCURV',
+    'invcurv': 'Initial inverse curvature, used to construct the inverse Hessian matrix',
+    'llineopt': 'Use a force based line minimizer for translation',
+    'fdstep': 'Finite difference step size for line optimizer',
+    'timestep': 'Dynamical time step',
+    'sdalpha': 'Ratio between force and step size',
+    'ftimemax': 'Maximum dynamical time step allowed',
+    'ftimedec': 'Factor to decrease dt',
+    'ftimeinc': 'Factor to increase dt',
+    'falpha': 'Parameter that controls velocity damping',
+    'fnmin': 'Minium number of iterations before adjust alpha and dt'
+}
+
 
 class VaspNEBWorkChain(BaseRestartWorkChain):
     """
@@ -288,7 +307,8 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             raise InputValidationError("Must supply either 'kpoints' or 'kpoints_spacing' or 'kpoints_spacing_vasp")
 
         # Set settings
-        unsupported_parameters = {'iopt': 'TAG for VTST'}
+
+        unsupported_parameters = dict(VTST_ADDITIONAL_TAGS)
         if 'settings' in self.inputs:
             self.ctx.inputs.settings = self.inputs.settings
             # Also check if the user supplied additional tags that is not in the supported file.
