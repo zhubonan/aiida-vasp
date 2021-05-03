@@ -7,8 +7,9 @@ The file parser that handles the parsing of POSCAR and CONTCAR files.
 # pylint: disable=no-self-use
 import numpy as np
 
-from parsevasp.poscar import Poscar, Site
 from aiida.common.constants import elements
+
+from parsevasp.poscar import Poscar, Site
 from aiida_vasp.parsers.file_parsers.parser import BaseFileParser
 from aiida_vasp.parsers.node_composer import NodeComposer, get_node_composer_inputs_from_file_parser
 from aiida_vasp.utils.aiida_utils import get_data_class
