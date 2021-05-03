@@ -248,7 +248,7 @@ class VaspNEBCalculation(VaspCalculation):
             last_order = order
             last_num_atoms = num_atoms
 
-    def write_incar(self, dst, validate_tags=True):  # pylint: disable=unused-argument
+    def write_incar(self, dst, validate_tags=False):  # pylint: disable=unused-argument
         """
         Write the INCAR without tag validation.
         Validation is performed at `parsevasp` level and VTST tags are not included.
