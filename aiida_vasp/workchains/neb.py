@@ -274,9 +274,13 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         frames = [self.ctx.inputs.initial_structure.get_ase()] + frames + [self.ctx.inputs.final_structure.get_ase()]
 
         last_frame = frames[0]
+        # Function for computing the distance using the scaled positions
+        rel_dist = np.vectorize(lambda x: x if x < 0.5 else 1. - x)
         for iframe, frame in enumerate(frames[1:]):
             # Relative displacements
             disp = abs(frame.get_scaled_positions() - last_frame.get_scaled_positions()) % 1.0
+            # Apply convention
+            disp = rel_dist(disp)
             # Convert back to absolute displacement
             disp = disp @ frame.cell
             norm_disp = np.linalg.norm(disp, axis=1)
