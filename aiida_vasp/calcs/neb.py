@@ -135,7 +135,7 @@ class VaspNEBCalculation(VaspCalculation):
             704,
             'ERROR_DIAGNOSIS_OUTPUTS_MISSING',
             message=
-            'Outputs for diagosis are missing, please make sure the `neb_data` and `run_status` quantities are requested for parsing.')
+            'Outputs for diagnosis are missing, please make sure the `neb_data` and `run_status` quantities are requested for parsing.')
 
     def prepare_for_submission(self, tempfolder):
         """

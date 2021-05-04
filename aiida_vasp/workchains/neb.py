@@ -275,7 +275,10 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
 
         last_frame = frames[0]
         for iframe, frame in enumerate(frames[1:]):
-            disp = frame.positions - last_frame.positions
+            # Relative displacements
+            disp = (frame.get_scaled_positions() - last_frame.get_scaled_positions()) % 1.0
+            # Convert back to absolute displacement
+            disp = disp @ frame.cell
             norm_disp = np.linalg.norm(disp, axis=1)
             sort_idx = np.argsort(norm_disp)
             if norm_disp[sort_idx[-1]] > self._norm_disp_threshold:

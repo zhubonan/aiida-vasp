@@ -132,7 +132,7 @@ class VaspCalculation(VaspCalcBase):
             704,
             'ERROR_DIAGNOSIS_OUTPUTS_MISSING',
             message=
-            'Outputs for diagosis are missing, please make sure `run_status` and `notifications` quantities are requested for parsing.')
+            'Outputs for diagnosis are missing, please make sure `run_status` and `notifications` quantities are requested for parsing.')
 
         spec.exit_code(1001, 'ERROR_PARSING_FILE_FAILED', message='parsing a file has failed.')
         spec.exit_code(1002, 'ERROR_NOT_ABLE_TO_PARSE_QUANTITY', message='the parser is not able to parse the {quantity} quantity')
