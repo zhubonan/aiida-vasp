@@ -52,6 +52,11 @@ NEB_NODES = {
         'type': 'dict',
         'quantities': ['site_magnetization'],
     },
+    'image_forces': {
+        'link_name': 'image_forces',
+        'type': 'array',
+        'quantities': ['forces']
+    }
 }
 
 DEFAULT_OPTIONS = {
@@ -64,6 +69,7 @@ DEFAULT_OPTIONS = {
     'add_structure': True,
     'add_wavecar': False,
     'add_site_magnetization': False,
+    'add_image_forces': True,
 }
 
 _VASP_OUTPUT = 'stdout'
@@ -85,8 +91,8 @@ class VtstNebParser(VaspParser):
     in subfolders. With the only exception being `vasprun.xml` it is not clear what image this file is
     for.
     """
-    COMBINED_QUANTITY = ['neb_data']
-    COMBINED_NODES = ['neb_misc']
+    COMBINED_QUANTITY = ['neb_data', 'outcar-forces']
+    COMBINED_NODES = ['neb_misc', 'image_forces']
 
     def __init__(self, node):
         super(VtstNebParser, self).__init__(node)
@@ -208,7 +214,7 @@ class VtstNebParser(VaspParser):
 
         return parsed_quantities, failed_to_parse_quantities
 
-    def _compose_nodes(self, parsed_quantities):
+    def _compose_nodes(self, parsed_quantities):  # pylint: disable=too-many-branches
         """
         Compose the nodes as required.
 
@@ -220,19 +226,27 @@ class VtstNebParser(VaspParser):
         However, some output includes the data from images, and needs to be handed separately.
         """
         # Excluded per-image quantities, they should be dispatched in one node
-        exclude_list = ['neb_data']
+        exclude_list = ['neb_data', 'outcar-forces']
 
         # Compose nodes for each image and buildthe combined quantity dictionary
         combined_quantities = {}
         for image_idx in range(1, self.get_num_images() + 1):
             quantity_dict = {}
+            image_name = f'{image_idx:02d}'
             for key, value in parsed_quantities[f'{image_idx:02d}'].items():
                 if key in self.COMBINED_QUANTITY:
                     # Combined excluded data into a single dictionary
-                    if key in combined_quantities:
-                        combined_quantities[key][f'{image_idx:02d}'] = value
+                    # This gives something like {'neb_data': {'01': {...dict for image 1...}},
+                    #                            'image_forces': {'image_forces_01': {...dict for image 1...}}}
+                    # The prefix for forces is needed so that the composer will name each array like 'image_forces_xx'
+                    if key == 'outcar-forces':
+                        sub_key = 'forces_' + image_name
                     else:
-                        combined_quantities[key] = {f'{image_idx:02d}': value}
+                        sub_key = image_name
+                    if key in combined_quantities:
+                        combined_quantities[key][sub_key] = value
+                    else:
+                        combined_quantities[key] = {sub_key: value}
                 else:
                     quantity_dict[key] = value
 

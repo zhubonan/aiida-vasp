@@ -59,3 +59,8 @@ def test_neb_parser(neb_parser_with_test):
 
     # Make sure structures are parsed as well
     assert 'structure.image_01' in parser.outputs
+
+    # Check that the forces is parserd
+    forces = parser.outputs.image_forces.get_array('forces_01')
+    assert forces[0].tolist() == [0.008815, 0.005492, -0.000661]
+    assert forces.shape == (4, 3)

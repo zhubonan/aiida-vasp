@@ -151,7 +151,9 @@ def test_neb(fresh_aiida_env, neb_outcar_parser):
     Should contain the symmetries and the elastic moduli.
 
     """
-    data = neb_outcar_parser.neb_data
+    data = neb_outcar_parser.get_quantity('neb_data')
     assert data['neb_converged']
     assert data['force_prep_real'] == 0.017467
     assert data['energy_extrapolated'] == -19.49550593
+
+    assert neb_outcar_parser.forces[0].tolist() == [0.008815, 0.005492, -0.000661]
