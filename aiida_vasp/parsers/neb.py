@@ -69,7 +69,7 @@ DEFAULT_OPTIONS = {
     'add_structure': True,
     'add_wavecar': False,
     'add_site_magnetization': False,
-    'add_image_forces': True,
+    'add_image_forces': False,
 }
 
 _VASP_OUTPUT = 'stdout'
@@ -183,8 +183,7 @@ class VtstNebParser(VaspParser):
                 except Exception:  # pylint: disable=broad-except
                     parser = None
                     failed_to_parse_quantities.append(quantity_key)
-                    print('Cannot instantiate {} for {}, exception {}:'.format(file_parser_cls, quantity_key, traceback.format_exc()))
-                    #self.logger.warning('Cannot instantiate {}, exception {}:'.format(quantity_key, traceback.format_exc()))
+                    self.logger.warning('Cannot instantiate {}, exception {}:'.format(quantity_key, traceback.format_exc()))
 
                 file_parser_instances[file_parser_cls] = parser
 
@@ -202,8 +201,7 @@ class VtstNebParser(VaspParser):
             except Exception:  # pylint: disable=broad-except
                 parsed_quantity = None
                 failed_to_parse_quantities.append(quantity_key)
-                #self.logger.warning('Error parsing {} from {}, exception {}:'.format(quantity_key, parser, traceback.format_exc()))
-                print('Error parsing {} from {}, exception {}:'.format(quantity_key, parser, traceback.format_exc()))
+                self.logger.warning('Error parsing {} from {}, exception {}:'.format(quantity_key, parser, traceback.format_exc()))
 
             if parsed_quantity is not None:
                 parsed_quantities[quantity_key] = parsed_quantity
@@ -346,7 +344,7 @@ class VtstNebParser(VaspParser):
         if not all(per_image.get('neb_converged', False) for per_image in neb_data_list):
             if self._check_ionic_convergence:
                 return self.exit_codes.ERROR_IONIC_NOT_CONVERGED
-            self.logger.warning('The NEB calculation is not converged, but the calcualtion is treated as successful.')
+            self.logger.warning('The NEB calculation is not converged, but the calculation is treated as successful.')
 
         # Check for the existence of critical warnings. This is performed for all images.
         all_notifications = []
