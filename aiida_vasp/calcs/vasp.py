@@ -114,17 +114,25 @@ class VaspCalculation(VaspCalcBase):
         spec.output('dynmat', valid_type=get_data_class('array'), required=False, help='The output dynamical matrix.')
         spec.output('site_magnetization', valid_type=get_data_class('dict'), required=False, help='The output of the site magnetization')
         spec.exit_code(0, 'NO_ERROR', message='the sun is shining')
-        spec.exit_code(350, 'ERROR_NO_RETRIEVED_FOLDER', message='the retrieved folder data node could not be accessed.')
+        spec.exit_code(350,
+                       'ERROR_NO_RETRIEVED_FOLDER',
+                       message='the retrieved folder data node could not be accessed.',
+                       invalidates_cache=True)
         spec.exit_code(351,
                        'ERROR_NO_RETRIEVED_TEMPORARY_FOLDER',
-                       message='the retrieved_temporary folder data node could not be accessed.')
-        spec.exit_code(352, 'ERROR_CRITICAL_MISSING_FILE', message='a file that is marked by the parser as critical is missing.')
+                       message='the retrieved_temporary folder data node could not be accessed.',
+                       invalidates_cache=True)
+        spec.exit_code(352,
+                       'ERROR_CRITICAL_MISSING_FILE',
+                       message='a file that is marked by the parser as critical is missing.',
+                       invalidates_cache=True)
         spec.exit_code(333,
                        'ERROR_VASP_DID_NOT_EXECUTE',
-                       message='VASP did not produce any output files and did likely not execute properly.')
+                       message='VASP did not produce any output files and did likely not execute properly.',
+                       invalidates_cache=True)
 
         # 700 series of the errors catches VASP execution related problems
-        spec.exit_code(700, 'ERROR_DID_NOT_FINISH', message='Calculation did not reach the end of execution.')
+        spec.exit_code(700, 'ERROR_DID_NOT_FINISH', message='Calculation did not reach the end of execution.', invalidates_cache=True)
         spec.exit_code(701, 'ERROR_ELECTRONIC_NOT_CONVERGED', message='The electronic structure is not converged.')
         spec.exit_code(702, 'ERROR_IONIC_NOT_CONVERGED', message='The ionic relaxation is not converged.')
         spec.exit_code(703, 'ERROR_VASP_CRITICAL_ERROR', message='VASP calculation encountered a critical error: {error_message}.')

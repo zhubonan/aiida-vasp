@@ -166,7 +166,10 @@ class VaspParser(BaseParser):
 
         # Store any exit codes returned in parser_warnings
         if self._file_parser_exit_codes:
-            parsed_quantities['file_parser_warnings'] = self.parser_warnings
+            if 'notifications' not in parsed_quantities:
+                parsed_quantities['notifications'] = []
+            for key, value in self.parser_warnings.items():
+                parsed_quantities['notifications'].append({'name': key, 'message': value['message'], 'status': value['status']})
 
         # Compose the output nodes using the parsed quantities
         nodes_failed_to_create = self._compose_nodes(parsed_quantities)
@@ -260,9 +263,6 @@ class VaspParser(BaseParser):
         for node_name, node_dict in self._settings.output_nodes_dict.items():
             inputs = get_node_composer_inputs(equivalent_quantity_keys, parsed_quantities, node_dict['quantities'])
 
-            if node_name == 'misc':
-                inputs['file_parser_warnings'] = parsed_quantities.get('file_parser_warnings')
-
             # If the input is empty, we skip creating the node as it is bound to fail
             if not inputs:
                 nodes_failed_to_create.append(node_name)
@@ -340,7 +340,7 @@ class VaspParser(BaseParser):
         if run_status['ionic_converged'] is False:
             if self._check_ionic_convergence:
                 return self.exit_codes.ERROR_IONIC_NOT_CONVERGED
-            self.logger.warning('The ionic relaxation is not converged, but the calcualtion is treated as successful.')
+            self.logger.warning('The ionic relaxation is not converged, but the calculation is treated as successful.')
 
         # Check for the existence of critical warnings
         if 'notifications' in quantities:
