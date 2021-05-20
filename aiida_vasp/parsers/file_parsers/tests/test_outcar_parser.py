@@ -99,7 +99,6 @@ def test_parameter_results(fresh_aiida_env, outcar_parser):
     assert data_dict['run_stats']
     assert data_dict['run_stats']['total_cpu_time_used'] == 89.795
     assert data_dict['run_stats']['average_memory_used'] == 0.0
-
     assert data_dict['run_status']['last_iteration_index'] == [15, 5]
     assert data_dict['run_status']['finished']
     assert data_dict['run_status']['ionic_converged']
@@ -142,3 +141,19 @@ def test_run_status(fresh_aiida_env, outcar_parser, expected):
     assert data_dict['run_status']['electronic_converged'] is expected[2]
     assert data_dict['run_status']['consistent_nelm_breach'] is expected[3]
     assert data_dict['run_status']['contains_nelm_breach'] is expected[4]
+
+
+@pytest.mark.parametrize('neb_outcar_parser', ['neb/01'], indirect=True)
+def test_neb(fresh_aiida_env, neb_outcar_parser):
+    """
+    Test that the parameter node is a ParametersData instance.
+
+    Should contain the symmetries and the elastic moduli.
+
+    """
+    data = neb_outcar_parser.get_quantity('neb_data')
+    assert data['neb_converged']
+    assert data['force_prep_real'] == 0.017467
+    assert data['energy_extrapolated'] == -19.49550593
+
+    assert neb_outcar_parser.forces[0].tolist() == [0.008815, 0.005492, -0.000661]

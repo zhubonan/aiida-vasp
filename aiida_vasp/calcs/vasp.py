@@ -114,17 +114,25 @@ class VaspCalculation(VaspCalcBase):
         spec.output('dynmat', valid_type=get_data_class('array'), required=False, help='The output dynamical matrix.')
         spec.output('site_magnetization', valid_type=get_data_class('dict'), required=False, help='The output of the site magnetization')
         spec.exit_code(0, 'NO_ERROR', message='the sun is shining')
-        spec.exit_code(350, 'ERROR_NO_RETRIEVED_FOLDER', message='the retrieved folder data node could not be accessed.')
+        spec.exit_code(350,
+                       'ERROR_NO_RETRIEVED_FOLDER',
+                       message='the retrieved folder data node could not be accessed.',
+                       invalidates_cache=True)
         spec.exit_code(351,
                        'ERROR_NO_RETRIEVED_TEMPORARY_FOLDER',
-                       message='the retrieved_temporary folder data node could not be accessed.')
-        spec.exit_code(352, 'ERROR_CRITICAL_MISSING_FILE', message='a file that is marked by the parser as critical is missing.')
+                       message='the retrieved_temporary folder data node could not be accessed.',
+                       invalidates_cache=True)
+        spec.exit_code(352,
+                       'ERROR_CRITICAL_MISSING_FILE',
+                       message='a file that is marked by the parser as critical is missing.',
+                       invalidates_cache=True)
         spec.exit_code(333,
                        'ERROR_VASP_DID_NOT_EXECUTE',
-                       message='VASP did not produce any output files and did likely not execute properly.')
+                       message='VASP did not produce any output files and did likely not execute properly.',
+                       invalidates_cache=True)
 
         # 700 series of the errors catches VASP execution related problems
-        spec.exit_code(700, 'ERROR_DID_NOT_FINISH', message='Calculation did not reach the end of execution.')
+        spec.exit_code(700, 'ERROR_DID_NOT_FINISH', message='Calculation did not reach the end of execution.', invalidates_cache=True)
         spec.exit_code(701, 'ERROR_ELECTRONIC_NOT_CONVERGED', message='The electronic structure is not converged.')
         spec.exit_code(702, 'ERROR_IONIC_NOT_CONVERGED', message='The ionic relaxation is not converged.')
         spec.exit_code(703, 'ERROR_VASP_CRITICAL_ERROR', message='VASP calculation encountered a critical error: {error_message}.')
@@ -132,7 +140,7 @@ class VaspCalculation(VaspCalcBase):
             704,
             'ERROR_DIAGNOSIS_OUTPUTS_MISSING',
             message=
-            'Outputs for diagosis are missing, please make sure `run_status` and `notifications` quantities are requested for parsing.')
+            'Outputs for diagnosis are missing, please make sure `run_status` and `notifications` quantities are requested for parsing.')
 
         spec.exit_code(1001, 'ERROR_PARSING_FILE_FAILED', message='parsing a file has failed.')
         spec.exit_code(1002, 'ERROR_NOT_ABLE_TO_PARSE_QUANTITY', message='the parser is not able to parse the {quantity} quantity')
@@ -193,9 +201,12 @@ class VaspCalculation(VaspCalcBase):
             self._prestore()
 
     def _prestore(self):
-        """Set attributes prior to storing."""
+        """
+        Set attributes prior to storing.
+        BONAN: Is this used in any case??
+        """
         super(VaspCalculation, self)._prestore()
-        setattr(self, 'elements', ordered_unique_list(self.inputs.structure.get_ase().get_chemical_symbols()))
+        setattr(self, 'elements', ordered_unique_list(self._structure().get_ase().get_chemical_symbols()))
 
     @property
     def _parameters(self):
@@ -284,7 +295,7 @@ class VaspCalculation(VaspCalcBase):
                 if 'WAVECAR' not in remote_copy_fnames:
                     raise FileNotFoundError('Could not find WAVECAR in {}'.format(remote_folder.get_remote_path()))
 
-    def write_incar(self, dst):  # pylint: disable=unused-argument
+    def write_incar(self, dst, validate_tags=True):  # pylint: disable=unused-argument
         """
         Write the INCAR.
 
@@ -293,7 +304,7 @@ class VaspCalculation(VaspCalcBase):
 
         :param dst: absolute path of the file to write to
         """
-        incar_parser = IncarParser(data=self.inputs.parameters)
+        incar_parser = IncarParser(data=self.inputs.parameters, validate_tags=validate_tags)
         incar_parser.write(dst)
 
     def write_poscar(self, dst):  # pylint: disable=unused-argument

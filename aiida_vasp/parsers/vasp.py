@@ -126,7 +126,7 @@ class VaspParser(BaseParser):
         self._definitions = ParserDefinitions()
         self._settings = ParserSettings(parser_settings, default_settings=DEFAULT_OPTIONS)
         self._parsable_quantities = ParsableQuantities(vasp_parser_logger=self.logger)
-        self._file_parse_exit_codes = {}
+        self._file_parser_exit_codes = {}
 
     def add_parser_definition(self, filename, parser_dict):
         """Add the definition of a fileParser to self._definitions."""
@@ -140,10 +140,16 @@ class VaspParser(BaseParser):
         """Add a custom node to the settings."""
         self._settings.add_output_node(node_name, node_dict)
 
+    def _setup_parsable(self):
+
+        self._parsable_quantities.setup(retrieved_filenames=self._retrieved_content.keys(),
+                                        parser_definitions=self._definitions.parser_definitions,
+                                        quantity_names_to_parse=self._settings.quantity_names_to_parse)
+
     def parse(self, **kwargs):  # pylint: disable=too-many-return-statements
         """The function that triggers the parsing of a calculation."""
 
-        self._file_parse_exit_codes = {}
+        self._file_parser_exit_codes = {}
         error_code = self._compose_retrieved_content(kwargs)
         if error_code is not None:
             return error_code
@@ -152,16 +158,18 @@ class VaspParser(BaseParser):
             if file_name not in self._retrieved_content.keys() and value_dict['is_critical']:
                 return self.exit_codes.ERROR_CRITICAL_MISSING_FILE
 
-        self._parsable_quantities.setup(retrieved_filenames=self._retrieved_content.keys(),
-                                        parser_definitions=self._definitions.parser_definitions,
-                                        quantity_names_to_parse=self._settings.quantity_names_to_parse)
+        # Setup the parsable quantities
+        self._setup_parsable()
 
         # Parse the quantities from retrived files
         parsed_quantities, failed_to_parse_quantities = self._parse_quantities()
 
         # Store any exit codes returned in parser_warnings
-        if self._file_parse_exit_codes:
-            parsed_quantities['file_parser_warnings'] = self.parser_warnings
+        if self._file_parser_exit_codes:
+            if 'notifications' not in parsed_quantities:
+                parsed_quantities['notifications'] = []
+            for key, value in self.parser_warnings.items():
+                parsed_quantities['notifications'].append({'name': key, 'message': value['message'], 'status': value['status']})
 
         # Compose the output nodes using the parsed quantities
         nodes_failed_to_create = self._compose_nodes(parsed_quantities)
@@ -181,9 +189,10 @@ class VaspParser(BaseParser):
 
         # All quantities has been parsed, but there exit_codes reported from the parser
         # in this case, we return the code with the lowest status (hopefully the most severe)
-        if self._file_parse_exit_codes:
-            self._file_parse_exit_codes.sort(key=lambda x: x.status)
-            return self._file_parse_exit_codes[0]
+        if self._file_parser_exit_codes:
+            exit_codes = list(self._file_parser_exit_codes.values())
+            exit_codes.sort(key=lambda x: x.status)
+            return exit_codes[0]
 
         return self.exit_codes.NO_ERROR
 
@@ -236,7 +245,7 @@ class VaspParser(BaseParser):
 
             # Keep track of exit_code, if any
             if parser.exit_code and parser.exit_code.status != 0:
-                self._file_parse_exit_codes[str(file_parser_cls)] = parser.exit_code
+                self._file_parser_exit_codes[str(file_parser_cls)] = parser.exit_code
 
         return parsed_quantities, failed_to_parse_quantities
 
@@ -253,9 +262,6 @@ class VaspParser(BaseParser):
 
         for node_name, node_dict in self._settings.output_nodes_dict.items():
             inputs = get_node_composer_inputs(equivalent_quantity_keys, parsed_quantities, node_dict['quantities'])
-
-            if node_name == 'misc':
-                inputs['file_parser_warnings'] = parsed_quantities.get('file_parser_warnings')
 
             # If the input is empty, we skip creating the node as it is bound to fail
             if not inputs:
@@ -281,7 +287,7 @@ class VaspParser(BaseParser):
         Compose a list of parser warnings as returned by individual file parsers
         """
         warnings = {}
-        for key, exit_code in self._file_parse_exit_codes.items():
+        for key, exit_code in self._file_parser_exit_codes.items():
             warnings[key] = {
                 'status': exit_code.status,
                 'message': exit_code.message,
@@ -334,15 +340,69 @@ class VaspParser(BaseParser):
         if run_status['ionic_converged'] is False:
             if self._check_ionic_convergence:
                 return self.exit_codes.ERROR_IONIC_NOT_CONVERGED
-            self.logger.warning('The ionic relaxation is not converged, but the calcualtion is treated as successful.')
+            self.logger.warning('The ionic relaxation is not converged, but the calculation is treated as successful.')
 
         # Check for the existence of critical warnings
         if 'notifications' in quantities:
             notifications = quantities['notifications']
-            for item in notifications:
-                if item['name'] in CRITICAL_NOTIFICATIONS:
-                    return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=item['message'])
+            composer = NotificationComposer(notifications, quantities, self.node.inputs, self.exit_codes)
+            exit_code = composer.compose()
+            if exit_code is not None:
+                return exit_code
         else:
             self.logger.warning('WARNING: missing notification output for VASP warnings and errors.')
 
         return None
+
+
+class NotificationComposer:
+    """Compose errors codes based on the notifications"""
+
+    def __init__(self, notifications, parsed_quantities, inputs, exit_codes):
+        """
+        Composed error codes based on the notifications
+
+        Some of the errors need to have additional properties inspected before they can be emitted,
+        as they might be trigged in a harmless way.
+
+        To add new checkers, one needs to implement a property with the name of the error for this class and
+        contains the code for checking. This property should return the exit_code or return None. The property
+        is inspected if its name is in the list critical notifications.
+
+        :param notification: The list of parsed notifications from the stream parser.
+        :param parsed_quantities: The dictionary of parsed quantities.
+        :param inputs: The dictionary of the input nodes.
+        :param exit_codes: The dictionary of the exit codes from the parser.
+        """
+        self.notifications = notifications
+        self.notifications_dict = {item['name']: item['message'] for item in self.notifications}
+        self.parsed_quantities = parsed_quantities
+        self.inputs = inputs
+        self.exit_codes = exit_codes
+
+    def compose(self):
+        """
+        Compose the exit codes
+
+        Retruns None if no exit code should be emitted, otherwise emit the error code.
+        """
+        for critical in CRITICAL_NOTIFICATIONS:
+            if hasattr(self, critical):
+                output = getattr(self, critical)
+                if output:
+                    return output
+            elif critical in self.notifications_dict:
+                return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=self.notifications_dict[critical])
+        return None
+
+    @property
+    def brmix(self):
+        """Check if BRMIX should be emitted"""
+        if not 'brmix' in self.notifications_dict:
+            return None
+
+        # If NELECT is set explicitly for the calculation then this is not an critical error
+        if 'parameters' in self.inputs and 'nelect' in self.inputs['parameters'].get_dict():
+            return None
+
+        return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=self.notifications_dict['brmix'])

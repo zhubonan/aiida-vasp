@@ -27,7 +27,7 @@ from aiida_vasp.utils.fixtures.testdata import data_path
 from aiida_vasp.parsers.file_parsers.incar import IncarParser
 from aiida_vasp.parsers.file_parsers.poscar import PoscarParser
 from aiida_vasp.parsers.file_parsers.vasprun import VasprunParser
-from aiida_vasp.parsers.file_parsers.outcar import OutcarParser
+from aiida_vasp.parsers.file_parsers.outcar import OutcarParser, VtstNebOutcarParser
 from aiida_vasp.utils.general import copytree
 from aiida_vasp.parsers.file_parsers.stream import StreamParser
 
@@ -44,9 +44,9 @@ def localhost_dir(tmp_path_factory):
 def localhost(fresh_aiida_env, localhost_dir):
     """Fixture for a local computer called localhost. This is currently not in the AiiDA fixtures."""
     try:
-        computer = Computer.objects.get(name='localhost')
+        computer = Computer.objects.get(label='localhost')
     except NotExistent:
-        computer = Computer(name='localhost',
+        computer = Computer(label='localhost',
                             hostname='localhost',
                             transport_type='local',
                             scheduler_type='direct',
@@ -270,6 +270,46 @@ def vasp2w90_inputs(
 
 
 @pytest.fixture()
+def vasp_neb_inputs(fresh_aiida_env, vasp_params, vasp_kpoints, vasp_structure, potentials, vasp_code):
+    """Inputs dictionary for CalcJob Processes."""
+    from aiida.orm import Dict
+
+    def inner(settings=None, parameters=None):
+
+        inputs = AttributeDict()
+
+        metadata = AttributeDict({'options': {'resources': {'num_machines': 1, 'num_mpiprocs_per_machine': 1}}})
+
+        if settings is not None:
+            inputs.settings = Dict(dict=settings)
+
+        if isinstance(parameters, dict):
+            parameters = get_data_class('dict')(dict=parameters)
+
+        if parameters is None:
+            parameters = AttributeDict(vasp_params.get_dict())
+            parameters['images'] = 3
+            parameters = get_data_class('dict')(dict=parameters)
+
+        inputs.code = vasp_code
+        inputs.metadata = metadata
+        inputs.parameters = parameters
+        inputs.kpoints, _ = vasp_kpoints
+
+        inputs.initial_structure = vasp_structure
+        inputs.final_structure = vasp_structure
+
+        inputs.potential = potentials
+
+        neb_images = {f'images_{idx:02d}': vasp_structure for idx in range(1, 4)}
+        inputs.neb_images = neb_images
+
+        return inputs
+
+    return inner
+
+
+@pytest.fixture()
 def vasp_code(localhost):
     """Fixture for a vasp code, the executable it points to does not exist."""
     from aiida.orm import Code
@@ -331,7 +371,7 @@ def _mock_vasp(fresh_aiida_env, localhost, exec_name):
         if isinstance(fresh_aiida_env._manager, TemporaryProfileManager):
             aiidapath = Path(fresh_aiida_env._manager.root_dir) / '.aiida'
         else:
-            aiidapath = Path(os.environ['AIIDA_PATH']) / '.aiida'
+            aiidapath = Path(os.environ.get('AIIDA_PATH', os.environ.get('HOME'))) / '/.aiida'
         code.set_prepend_text('export AIIDA_PATH={}'.format(aiidapath))
 
     return code
@@ -410,6 +450,16 @@ def outcar_parser(request):
         folder = request.param
     path = data_path(folder, file_name)
     parser = OutcarParser(file_path=path, settings=ParserSettings({}))
+    return parser
+
+
+@pytest.fixture()
+def neb_outcar_parser(request):
+    """Return an instance of OutcarParser for a reference OUTCAR."""
+    from aiida_vasp.parsers.settings import ParserSettings
+    file_name = 'OUTCAR'
+    path = data_path(request.param, file_name)
+    parser = VtstNebOutcarParser(file_path=path, settings=ParserSettings({}))
     return parser
 
 
