@@ -6,6 +6,7 @@ Contains the VaspNEBWorkChain class definition which uses the BaseRestartWorkCha
 """
 #pylint: disable=too-many-branches, too-many-statements
 import numpy as np
+from aiida import __version__ as aiida_version
 from aiida.engine import while_
 from aiida import orm
 
@@ -189,18 +190,30 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         Handle the case where the calculations is not fully finished.
         This checks the existing of the run_stats field in the parsed per-image misc output
         """
-        if 'misc__image_01' not in node.outputs:
-            self.report('Cannot found the `misc` output containing the parsed per-image data')
-            return None
 
         finished = []
-        for key in node.outputs:
-            if key.startswith('misc__'):
-                misc = node.outputs[key].get_dict()
-                if 'run_stats' in misc:
+        # Since 1.6.3 the nested namespaces are handled properly.
+        if aiida_version == '1.6.3':
+            if 'misc' not in node.outputs:
+                self.report('Cannot found the `misc` output containing the parsed per-image data')
+                return None
+            for misc in node.outputs['misc'].values():
+                if 'run_status' in misc:
                     finished.append(True)
                 else:
                     finished.append(False)
+        else:
+            if 'misc__image_01' not in node.outputs:
+                self.report('Cannot found the `misc` output containing the parsed per-image data')
+                return None
+            for key in node.outputs:
+                if key.startswith('misc__'):
+                    misc = node.outputs[key].get_dict()
+                    if 'run_stats' in misc:
+                        finished.append(True)
+                    else:
+                        finished.append(False)
+
         if not all(finished):
             self.report('At least one image did not reach the end of VASP execution.')
 
