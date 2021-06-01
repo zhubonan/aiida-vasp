@@ -198,7 +198,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
                 self.report('Cannot found the `misc` output containing the parsed per-image data')
                 return None
             for misc in node.outputs['misc'].values():
-                if 'run_status' in misc:
+                if 'run_status' in misc.get_dict():
                     finished.append(True)
                 else:
                     finished.append(False)
@@ -230,10 +230,13 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         Attached the output structure of a children node as the inputs for the
         next workchain launch.
         """
-        output_images = AttributeDict()
-        for key in node.outputs:
-            if key.startswith('structure__'):
-                output_images[key.split('__')[1]] = node.outputs[key]
+        output_images = AttributeDict()  # A dictionary holding the structures with keys like 'image_xx'
+        if aiida_version == '1.6.3':
+            output_images = node.outputs['structure']
+        else:
+            for key in node.outputs:
+                if key.startswith('structure__'):
+                    output_images[key.split('__')[1]] = node.outputs[key]
         nout = len(output_images)
         nexists = len(self.inputs.neb_images)
         if nout != nexists:
