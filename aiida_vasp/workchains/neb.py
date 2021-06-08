@@ -6,6 +6,7 @@ Contains the VaspNEBWorkChain class definition which uses the BaseRestartWorkCha
 """
 #pylint: disable=too-many-branches, too-many-statements
 import numpy as np
+from aiida import __version__ as aiida_version
 from aiida.engine import while_
 from aiida import orm
 
@@ -141,7 +142,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
 
         # Sanity checks
         self._check_neb_inputs()
-        self.report('In SETUP, context metadata {}'.format(self.ctx.inputs))
+        #self.report('In SETUP, context metadata {}'.format(self.ctx.inputs))
         return None
 
     # def prepare_inputs(self):
@@ -180,7 +181,9 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             if out is not None:
                 return out
 
+            self.report(f'Successfully handled unconverged calculation {node}.')
             return ProcessHandlerReport()
+        self.report(f'Cannot handle ionically unconverged calculation {node}.')
         return None
 
     @process_handler(priority=900, exit_codes=[VaspNEBCalculation.exit_codes.ERROR_DID_NOT_FINISH])  # pylint: disable=no-member
@@ -189,18 +192,31 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         Handle the case where the calculations is not fully finished.
         This checks the existing of the run_stats field in the parsed per-image misc output
         """
-        if 'misc__image_01' not in node.outputs:
-            self.report('Cannot found the `misc` output containing the parsed per-image data')
-            return None
 
         finished = []
-        for key in node.outputs:
-            if key.startswith('misc__'):
-                misc = node.outputs[key].get_dict()
-                if 'run_stats' in misc:
+        # Since 1.6.3 the nested namespaces are handled properly.
+        if aiida_version == '1.6.3':
+            if 'misc' not in node.outputs:
+                self.report('Cannot found the `misc` output containing the parsed per-image data')
+                return None
+            for misc in node.outputs['misc'].values():
+                misc = misc.get_dict()
+                if 'run_status' in misc and misc['run_status'].get('finished'):
                     finished.append(True)
                 else:
                     finished.append(False)
+        else:
+            if 'misc__image_01' not in node.outputs:
+                self.report('Cannot found the `misc` output containing the parsed per-image data')
+                return None
+            for key in node.outputs:
+                if key.startswith('misc__'):
+                    misc = node.outputs[key].get_dict()
+                    if 'run_stats' in misc and misc['run_status'].get('finished'):
+                        finished.append(True)
+                    else:
+                        finished.append(False)
+
         if not all(finished):
             self.report('At least one image did not reach the end of VASP execution.')
 
@@ -209,7 +225,9 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
                 return out
 
             # No further process handling is needed
+            self.report(f'Successfully handled unfinished calculation {node}.')
             return ProcessHandlerReport(do_break=True)
+        self.report(f'Cannot handle unfinished calculation {node}.')
         return None
 
     def _attach_output_structure(self, node):
@@ -217,15 +235,19 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         Attached the output structure of a children node as the inputs for the
         next workchain launch.
         """
-        output_images = AttributeDict()
-        for key in node.outputs:
-            if key.startswith('structure__'):
-                output_images[key.split('__')[1]] = node.outputs[key]
+        output_images = AttributeDict()  # A dictionary holding the structures with keys like 'image_xx'
+        if aiida_version == '1.6.3':
+            output_images = node.outputs['structure']
+        else:
+            for key in node.outputs:
+                if key.startswith('structure__'):
+                    output_images[key.split('__')[1]] = node.outputs[key]
         nout = len(output_images)
         nexists = len(self.inputs.neb_images)
         if nout != nexists:
             self.report('Number of parsed images: {} does not equal to the images need to restart: {}.'.format(nout, nexists))
             return ProcessHandlerReport(do_break=True, exit_code=self.exit_codes.SUB_NEB_CALCULATION_ERROR)  # pylint: disable=no-member
+        self.report(f'Attached output structures from the previous calculation {node} as new inputs.')
         self.ctx.inputs.neb_images = output_images
         return None
 
