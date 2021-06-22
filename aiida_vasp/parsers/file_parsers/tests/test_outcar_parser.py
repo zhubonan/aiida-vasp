@@ -97,8 +97,9 @@ def test_parameter_results(fresh_aiida_env, outcar_parser):
     np.testing.assert_allclose(data_dict['elastic_moduli']['total'][3], test)
 
     assert data_dict['run_stats']
-    assert data_dict['run_stats']['total_cpu_time_used'] == 89.795
-    assert data_dict['run_stats']['average_memory_used'] == 0.0
+    assert data_dict['run_stats']['total_cpu_time_used'] == pytest.approx(89.795)
+    assert data_dict['run_stats']['average_memory_used'] == pytest.approx(0.0)
+
     assert data_dict['run_status']['last_iteration_index'] == [15, 5]
     assert data_dict['run_status']['finished']
     assert data_dict['run_status']['ionic_converged']
@@ -153,7 +154,7 @@ def test_neb(fresh_aiida_env, neb_outcar_parser):
     """
     data = neb_outcar_parser.get_quantity('neb_data')
     assert data['neb_converged']
-    assert data['force_prep_real'] == 0.017467
-    assert data['energy_extrapolated'] == -19.49550593
+    assert data['force_prep_real'] == pytest.approx(0.017467)
+    assert data['energy_extrapolated'] == pytest.approx(-19.49550593)
 
-    assert neb_outcar_parser.forces[0].tolist() == [0.008815, 0.005492, -0.000661]
+    np.testing.assert_allclose(neb_outcar_parser.forces[0], np.array([0.008815, 0.005492, -0.000661]))

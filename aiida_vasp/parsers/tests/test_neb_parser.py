@@ -21,7 +21,9 @@ def _get_neb_vasp_parser(neb_calc_with_retrieved):
     """Return vasp parser before parsing"""
     settings_dict = {
         # 'ADDITIONAL_RETRIEVE_LIST': CalculationFactory('vasp.vasp')._ALWAYS_RETRIEVE_LIST,
-        'parser_settings': {}
+        'parser_settings': {
+            'add_image_forces': True
+        }
     }
     file_path = str(os.path.abspath(os.path.dirname(__file__)) + '/../../test_data/neb')
     node = neb_calc_with_retrieved(file_path, settings_dict, 3)

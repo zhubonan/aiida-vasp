@@ -142,7 +142,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
 
         # Sanity checks
         self._check_neb_inputs()
-        self.report('In SETUP, context metadata {}'.format(self.ctx.inputs))
+        #self.report('In SETUP, context metadata {}'.format(self.ctx.inputs))
         return None
 
     # def prepare_inputs(self):
@@ -181,7 +181,9 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
             if out is not None:
                 return out
 
+            self.report(f'Successfully handled unconverged calculation {node}.')
             return ProcessHandlerReport()
+        self.report(f'Cannot handle ionically unconverged calculation {node}.')
         return None
 
     @process_handler(priority=900, exit_codes=[VaspNEBCalculation.exit_codes.ERROR_DID_NOT_FINISH])  # pylint: disable=no-member
@@ -223,7 +225,9 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
                 return out
 
             # No further process handling is needed
+            self.report(f'Successfully handled unfinished calculation {node}.')
             return ProcessHandlerReport(do_break=True)
+        self.report(f'Cannot handle unfinished calculation {node}.')
         return None
 
     def _attach_output_structure(self, node):
@@ -243,6 +247,7 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         if nout != nexists:
             self.report('Number of parsed images: {} does not equal to the images need to restart: {}.'.format(nout, nexists))
             return ProcessHandlerReport(do_break=True, exit_code=self.exit_codes.SUB_NEB_CALCULATION_ERROR)  # pylint: disable=no-member
+        self.report(f'Attached output structures from the previous calculation {node} as new inputs.')
         self.ctx.inputs.neb_images = output_images
         return None
 
