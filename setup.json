@@ -51,6 +51,7 @@
 	    "vasp.bands = aiida_vasp.workchains.bands:BandsWorkChain",
 	    "vasp.master = aiida_vasp.workchains.master:MasterWorkChain",
 	    "vasp.relax = aiida_vasp.workchains.relax:RelaxWorkChain",
+	    "vasp.neb = aiida_vasp.workchains.neb:VaspNEBWorkChain",
 	    "vasp.immigrant = aiida_vasp.workchains.immigrant:VaspImmigrantWorkChain"
 	],
 	"aiida.groups": [
