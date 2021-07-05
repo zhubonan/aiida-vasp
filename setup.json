@@ -51,6 +51,7 @@
 	    "vasp.bands = aiida_vasp.workchains.bands:BandsWorkChain",
 	    "vasp.master = aiida_vasp.workchains.master:MasterWorkChain",
 	    "vasp.relax = aiida_vasp.workchains.relax:RelaxWorkChain",
+	    "vasp.neb = aiida_vasp.workchains.neb:VaspNEBWorkChain",
 	    "vasp.immigrant = aiida_vasp.workchains.immigrant:VaspImmigrantWorkChain"
 	],
 	"aiida.groups": [
@@ -88,7 +89,8 @@
     },
     "include_package_data": true,
     "install_requires": [
-	"aiida-core[atomic_tools] >= 1.2.1,!=1.4.0,!=1.4.1",
+	"aiida-core[atomic_tools] >= 1.2.1,!=1.4.0,!=1.4.1,<2",
+	"psycopg2-binary~=2.8.3",
 	"subprocess32",
 	"pymatgen<=2020.12.3",
 	"lxml",
