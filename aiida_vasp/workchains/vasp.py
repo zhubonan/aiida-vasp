@@ -730,8 +730,9 @@ class VaspWorkChain(BaseRestartWorkChain):
         """
         notification = node.outputs.misc['notifications']
         self.report('Critical notifications detected: {} - aborting'.format(notification))
-        return ProcessHandlerReport(do_break=True,
-                                    exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=', '.join(notification)))
+        return ProcessHandlerReport(
+            do_break=True,
+            exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=', '.join(map(lambda x: x['name'], notification))))
 
     @process_handler(priority=5)
     def check_misc_output(self, node):
