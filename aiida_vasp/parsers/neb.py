@@ -8,7 +8,7 @@ from pathlib import Path
 from aiida.common.exceptions import NotExistent
 from aiida_vasp.parsers.settings import ParserSettings, ParserDefinitions
 from aiida_vasp.parsers.node_composer import NodeComposer, get_node_composer_inputs
-from aiida_vasp.parsers.vasp import VaspParser, CRITICAL_NOTIFICATIONS
+from aiida_vasp.parsers.vasp import VaspParser, NotificationComposer
 
 # pylint: disable=no-member
 
@@ -70,6 +70,28 @@ DEFAULT_OPTIONS = {
     'add_wavecar': False,
     'add_site_magnetization': False,
     'add_image_forces': False,
+    'critical_notifications': {
+        'add_brmix': True,
+        'add_cnormn': True,
+        'add_denmp': True,
+        'add_dentet': True,
+        'add_edddav_zhegv': True,
+        'add_eddrmm_zhegv': True,
+        'add_edwav': True,
+        'add_fexcp': True,
+        'add_fock_acc': True,
+        'add_non_collinear': True,
+        'add_not_hermitian': True,
+        #add_psmaxn': True,
+        'add_pzstein': True,
+        'add_real_optlay': True,
+        'add_rhosyg': True,
+        'add_rspher': True,
+        'add_set_indpw_full': True,
+        'add_sgrcon': True,
+        'add_no_potimm': True,
+        'add_magmom': True,
+    }
 }
 
 _VASP_OUTPUT = 'stdout'
@@ -351,8 +373,15 @@ class VtstNebParser(VaspParser):
         for image in quantities.values():
             all_notifications.extend(image.get('notifications', []))
 
-        for item in all_notifications:
-            if item['name'] in CRITICAL_NOTIFICATIONS:
-                return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=item['message'])
+        ignore_all = self.parser_settings.get('ignore_all_errors', False)
+        if not ignore_all:
+            composer = NotificationComposer(all_notifications,
+                                            quantities,
+                                            self.node.inputs,
+                                            self.exit_codes,
+                                            parser_settings=self._settings)
+            exit_code = composer.compose()
+            if exit_code is not None:
+                return exit_code
 
         return None
