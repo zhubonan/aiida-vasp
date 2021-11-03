@@ -5,6 +5,7 @@ VASP NEB workchain.
 Contains the VaspNEBWorkChain class definition which uses the BaseRestartWorkChain.
 """
 #pylint: disable=too-many-branches, too-many-statements
+from packaging import version
 import numpy as np
 from aiida import __version__ as aiida_version
 from aiida.engine import while_
@@ -236,7 +237,9 @@ class VaspNEBWorkChain(BaseRestartWorkChain):
         next workchain launch.
         """
         output_images = AttributeDict()  # A dictionary holding the structures with keys like 'image_xx'
-        if aiida_version == '1.6.3':
+        # For version older than 1.6.3 the rested output namespace is correctly handled
+        # Hence, we need to access directly using the and other than the `__` in the link name.
+        if version.parse(aiida_version) >= version.parse('1.6.3'):
             output_images = node.outputs['structure']
         else:
             for key in node.outputs:
