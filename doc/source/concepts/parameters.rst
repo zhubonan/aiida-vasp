@@ -60,7 +60,7 @@ The input would be composed ``inputs.parameters`` containing elements from the w
 
 Allowing custom `VASP`_ tags
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-In case you for instance perform developments in the `VASP`_ code, sometimes it makes sense to add a new `VASP`_ tag. This can be supplied in ``settings.inputs.unsupported_parameters`` as dict with the following specifications::
+In case you for instance perform developments in the `VASP`_ code, sometimes it makes sense to add a new `VASP`_ tag. This can be supplied in ``settings.unsupported_parameters`` as dict with the following specifications::
 
   unsupported_parameters = {'my_unsupported_parameters': {
   'default': 1.0,
@@ -68,5 +68,12 @@ In case you for instance perform developments in the `VASP`_ code, sometimes it 
   'type': float,
   'values': [1.0, 2.0]
   }
+
+Alternatively, the validation can be turned off entirely by setting ``skip_parameters_validation`` to ``True`` under ``settings``, for example::
+
+  builder.settings = Dict(dict={'skip_parameters_validation': True})
+
+The above works for both ``VaspWorkChain`` and ``VaspCalculation``.
+In the latter case, if any of ``skip_parameters_validation`` or ``unsupported_parameters`` are present in the ``settings`` input node, the validation is turned off completely.
 
 .. _VASP: https://www.vasp.at
