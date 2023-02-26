@@ -346,7 +346,7 @@ class VaspWorkChain(BaseRestartWorkChain):
             self.ctx.inputs.restart_folder = self.inputs.restart_folder
 
         # Then check if the workchain wants a restart
-        if self.ctx.restart_calc and isinstance(self.ctx.restart_calc.process_class, self._process_class):
+        if self.ctx.restart_calc and issubclass(self.ctx.restart_calc.process_class, self._process_class):
             self.ctx.inputs.restart_folder = self.ctx.restart_calc.outputs.remote_folder
             old_parameters = AttributeDict(self.ctx.inputs.parameters).copy()
             parameters = old_parameters.copy()
