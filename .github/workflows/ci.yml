@@ -94,10 +94,10 @@ jobs:
           replace-with: ''
       - name: Run tox and codecov
         if: matrix.python == '3.9'
-        run: tox -e py${{ steps.tox.outputs.replaced }}-aiida_vasp -- --cov=aiida_vasp --cov-append --cov-report=xml
+        run: tox -e py${{ steps.tox.outputs.replaced }}-aiida_vasp -- --cov=aiida_vasp --cov-append --cov-report=xml -vv
       - name: Run tox
         if: matrix.python != '3.9'
-        run: tox -e py${{ steps.tox.outputs.replaced }}-aiida_vasp
+        run: tox -e py${{ steps.tox.outputs.replaced }}-aiida_vasp -- -vv
       - name: Archive error mock calculations
         uses: actions/upload-artifact@v4
         if: ${{ failure() }}
