@@ -93,7 +93,7 @@ jobs:
           string: ${{ matrix.python }}
           replace-with: ''
       - name: Run tox and codecov
-        if: ${{ github.repository == 'aiida-vasp/aiida-vasp' && matrix.python == '3.9'}}
+        if: ${{ matrix.python == '3.9'}}
         run: tox -e py${{ steps.tox.outputs.replaced }}-aiida_vasp -- --cov=aiida_vasp --cov-append --cov-report=xml --durations=0
       - name: Run tox
         if: matrix.python != '3.9'
@@ -108,7 +108,7 @@ jobs:
           retention-days: 5
           if-no-files-found: warn
       - name: Upload coverage to Codecov
-        if: matrix.python == '3.9'
+        if: ${{ github.repository == 'aiida-vasp/aiida-vasp' && matrix.python == '3.9'}}
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
