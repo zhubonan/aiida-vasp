@@ -520,7 +520,7 @@ class PotcarFileData(ArchiveData, PotcarMetadataMixin, VersioningMixin):
         """Add the stored POTCAR file to an archive for export."""
         with self.get_file_obj_and_tar_obj() as objects:
             potcar_fo, tar_fo = objects
-            arcname = f'{self.symbol}/POTCAR'
+            arcname = f'{self.full_name}/POTCAR'
             tarinfo = tar_fo.members[0]
             tarinfo.name = arcname
             if not dry_run:
@@ -533,14 +533,14 @@ class PotcarFileData(ArchiveData, PotcarMetadataMixin, VersioningMixin):
 
         :param path: path to the destination file or folder as a Path or string object
 
-        When given a folder, the destination file will be created in a subdirectory with the name of the symbol.
+        When given a folder, the destination file will be created in a subdirectory with the name of the full_name.
         This is for conveniently exporting multiple files into the same folder structure as the POTCARs are
         distributed in.
 
         Examples::
 
             potcar_file = PotcarFileData.get_or_create(<file>)
-            assert potcar_file.symbol == 'Si_d'
+            assert potcar_file.full_name == 'Si_d'
 
             potcar_file.export('./POTCAR.Si')
             ## writes to ./POTCAR.Si
@@ -554,7 +554,7 @@ class PotcarFileData(ArchiveData, PotcarMetadataMixin, VersioningMixin):
         """
         path = Path(path)
         if path.is_dir():
-            path = path / self.symbol / 'POTCAR'
+            path = path / self.full_name / 'POTCAR'
         if not dry_run:
             # Make sure the directory exists
             path_dir = path.parent
