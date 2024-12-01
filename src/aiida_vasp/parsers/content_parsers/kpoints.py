@@ -231,6 +231,31 @@ def parsevasp_to_aiida(kpoints, logger):
                 weights = None
                 cartesian = None
 
+    mode = kpoints_dict.get('mode')
+
+    if mode == 'automatic':
+        # Automatic mode
+        kpoints_dict['mesh'] = kpoints_dict.get('divisions')
+        # Defaults to the always-GAMMA center scheme in consistent with KpointData
+        if kpoints_dict['centering'] == 'Gamma':
+            offset = [0.0, 0.0, 0.0]
+        elif kpoints_dict['centering'] == 'Monkhorst-Pack':
+            mesh = kpoints_dict['mesh']
+            offset = []
+            # Add the offset for each dimension
+            for i in range(3):
+                if mesh[i] % 2 == 0:
+                    offset.append(0.5 / mesh[i])
+                else:
+                    offset.append(0.0)
+        else:
+            raise ValueError('Invalid centering type detected.')
+        # Add the explicit shifts in the KPOINTS files
+        shifts = kpoints_dict.get('shifts')
+        if shifts is None:
+            shifts = [0.0, 0.0, 0.0]
+        kpoints_dict['offset'] = [x + o for x, o in zip(shifts, offset)]
+
     # Make sure weights is ndarray
     if weights is not None:
         weights = np.array(weights)
