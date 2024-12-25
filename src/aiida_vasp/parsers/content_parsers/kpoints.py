@@ -180,7 +180,7 @@ class KpointsParser(BaseFileParser):
         kpoints_dict['shifts'] = mesh[1]
         kpoints_dict['mode'] = 'automatic'
         # Here we need to make a choice, so should add more to AiiDA to make this better defined
-        kpoints_dict['centering'] = 'Gamma'
+        kpoints_dict['centering'] = kpointsdata.base.attributes.get('vasp_centering', 'Gamma')
         kpoints_dict['num_kpoints'] = 0
 
         return kpoints_dict

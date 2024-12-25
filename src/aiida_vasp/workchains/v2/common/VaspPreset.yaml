@@ -1,5 +1,6 @@
 name: 'VaspPreset'
 inputset: 'UCLRelaxSet'
+inputset_class: 'VASPInputSet'
 default_code: 'vasp@localhost'
 
 code_specific:

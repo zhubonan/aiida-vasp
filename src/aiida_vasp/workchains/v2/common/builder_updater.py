@@ -15,6 +15,7 @@ from aiida.engine.processes.builder import ProcessBuilder, ProcessBuilderNamespa
 from yaml import safe_load
 
 from ..inputset.base import convert_lowercase
+from ..inputset.pmg import PymatgenInputSet
 from ..inputset.vaspsets import VASPInputSet
 from ..relax import RelaxOptions
 
@@ -80,6 +81,7 @@ class VaspPresetConfig:
     name: str
     inputset: str
     default_code: str
+    inputset_class: str = field(default='VASPInputSet')
     code_specific: dict = field(default_factory=dict)
     default_options: dict = field(default_factory=dict)
     default_settings: dict = field(default_factory=dict)
@@ -124,6 +126,7 @@ class BaseBuilderUpdater:
         self,
         preset_name: Union[None, str] = None,
         builder: Union[ProcessBuilder, None] = None,
+        preset_overrides=None,
         verbose=False,
         set_name=None,
     ):
@@ -140,6 +143,13 @@ class BaseBuilderUpdater:
             preset_name = DEFAULT_PRESET
         self.preset_name = preset_name
         self.preset = VaspPresetConfig.from_file(preset_name)
+        if preset_overrides is not None:
+            for key, value in preset_overrides.items():
+                try:
+                    getattr(self.preset, key)
+                except AttributeError:
+                    raise ValueError(f'Preset {preset_name} does not have key {key}')
+                setattr(self.preset, key, value)
         self.set_name = set_name if set_name is not None else self.preset.inputset
 
     @property
@@ -197,6 +207,7 @@ class BaseBuilderUpdater:
 class VaspBuilderUpdater(BaseBuilderUpdater):
     WF_ENTRYPOINT = 'vasp.v2.vasp'
     DEFAULT_INPUTSET = DEFAULT_INPUTSET
+    EXCLUDED_KEYS = tuple()
 
     def __init__(
         self,
@@ -206,6 +217,7 @@ class VaspBuilderUpdater(BaseBuilderUpdater):
         code: Optional[str] = None,
         verbose: bool = False,
         set_name: Optional[str] = None,
+        preset_overrides=None,
     ):
         """
         Initialise the update object.
@@ -216,7 +228,13 @@ class VaspBuilderUpdater(BaseBuilderUpdater):
         :param root_namespace: The namespace to be assumed to be the *root*, e.g. where the input structure
           should be specified.
         """
-        super().__init__(preset_name=preset_name, builder=builder, verbose=verbose, set_name=set_name)
+        super().__init__(
+            preset_name=preset_name,
+            builder=builder,
+            verbose=verbose,
+            set_name=set_name,
+            preset_overrides=preset_overrides,
+        )
         # Define the root namespace - e.g. the VaspWorkChain namespace where structure should be specified
         if root_namespace is None:
             self.root_namespace = self._builder
@@ -286,11 +304,30 @@ class VaspBuilderUpdater(BaseBuilderUpdater):
         else:
             overrides_ = overrides
 
-        inset = VASPInputSet(set_name, overrides=overrides_, verbose=self.verbose)
-        self.namespace_vasp.parameters = orm.Dict(dict={'incar': inset.get_input_dict(structure)})
+        if self.preset.inputset_class == 'VASPInputSet':
+            inset = VASPInputSet(set_name, overrides=overrides_, verbose=self.verbose)
+        elif self.preset.inputset_class == 'PymatgenInputSet':
+            inset = PymatgenInputSet(set_name, overrides=overrides_, verbose=self.verbose)
+        else:
+            raise ValueError(f'Unsupported inputset class {self.preset.inputset_class}')
+        # Construct the parameters, but exclude certain keys for functional workchains
+        self.namespace_vasp.parameters = orm.Dict(
+            dict={
+                'incar': {
+                    key: value
+                    for key, value in inset.get_input_dict(structure).items()
+                    if key not in self.EXCLUDED_KEYS
+                }
+            }
+        )
         self.namespace_vasp.potential_family = orm.Str(inset.get_potcar_family())
         self.namespace_vasp.potential_mapping = orm.Dict(dict=inset.get_pp_mapping(structure))
-        self.namespace_vasp.kpoints_spacing = orm.Float(inset.get_kpoints_spacing())
+        # The input set may use a spacing value or a kpoints object
+        try:
+            self.namespace_vasp.kpoints_spacing = orm.Float(inset.get_kpoints_spacing())
+        except NotImplementedError:
+            self.namespace_vasp.kpoints = inset.get_kpoints(structure)
+
         setattr(self.root_namespace, structure_node_name, structure)
         return self
 
@@ -548,6 +585,7 @@ class VaspRelaxUpdater(VaspBuilderUpdater):
     An updater for VaspRelaxWorkChain
     """
 
+    EXCLUDED_KEYS = ('ibrion', 'isif', 'icharg', 'istart', 'nsw')
     WF_ENTRYPOINT = 'vasp.v2.relax'
 
     def __init__(
@@ -557,8 +595,15 @@ class VaspRelaxUpdater(VaspBuilderUpdater):
         override_vasp_namespace: Optional[ProcessBuilderNamespace] = None,
         namespace_relax: Optional[ProcessBuilderNamespace] = None,
         code: Optional[str] = None,
+        preset_overrides=None,
     ):
-        super().__init__(preset_name=preset_name, builder=builder, code=code, root_namespace=builder)
+        super().__init__(
+            preset_name=preset_name,
+            builder=builder,
+            code=code,
+            root_namespace=builder,
+            preset_overrides=preset_overrides,
+        )
         # The primary VASP namespace is under builder.vasp
         if override_vasp_namespace is None:
             self.namespace_vasp = self._builder.vasp
@@ -623,9 +668,16 @@ class VaspBandUpdater(VaspBuilderUpdater):
     """Updater for VaspBandsWorkChain"""
 
     WF_ENTRYPOINT = 'vasp.v2.bands'
+    EXCLUDED_KEYS = ('ibrion', 'isif', 'icharg', 'istart', 'nsw')
 
-    def __init__(self, preset_name=None, builder=None, override_vasp_namespace=None, code=None):
-        super().__init__(preset_name=preset_name, builder=builder, code=code, root_namespace=builder)
+    def __init__(self, preset_name=None, builder=None, override_vasp_namespace=None, code=None, preset_overrides=None):
+        super().__init__(
+            preset_name=preset_name,
+            builder=builder,
+            code=code,
+            root_namespace=builder,
+            preset_overrides=preset_overrides,
+        )
         # The primary VASP namespace is under builder.vasp
         if override_vasp_namespace is None:
             self.namespace_vasp = self.builder.scf

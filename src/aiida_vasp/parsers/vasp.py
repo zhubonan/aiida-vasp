@@ -432,6 +432,8 @@ class VaspParser(Parser):
                 )
             elif kpoints_data['mode'] == 'automatic':
                 node.set_kpoints_mesh(kpoints_data['divisions'], offset=kpoints_data['shifts'])
+                # We store the centering mode return by parse-vasp
+                node.base.attributes.set('vasp_centering', kpoints_data.get('centering', 'Gamma'))
             else:
                 raise ValueError(f'Unknown kpoints mode {kpoints_data["mode"]}')
             return node
