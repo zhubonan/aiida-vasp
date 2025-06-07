@@ -153,6 +153,7 @@ class ParserSettingsConfig(OptionContainer):
             'no_potimm',
             'magmom',
             'bandocc',
+            'generic_box_error',
         ],
     )
     critical_objects: List[str] = Field(
@@ -237,6 +238,7 @@ class VaspParser(Parser):
                 if sub_key in self.quantities_to_exclude:
                     del parsed_quantities[sub_key]
 
+    def _check_required_quantities(self):
         # Check in required quantities are present
         missing_required = []
         for name in self.user_config.required_quantity:
@@ -267,7 +269,9 @@ class VaspParser(Parser):
             if resolved_name in self.retrieve_object_names:
                 with self.retrieved.open(resolved_name, open_mode) as handler:
                     try:
-                        parser: BaseFileParser = parser_cls(handler=handler, settings=content_parser_settings)
+                        parser: BaseFileParser = parser_cls(
+                            handler=handler, settings=content_parser_settings, logger=self.logger
+                        )
                     except Exception as error:
                         self.errored_parsers[name] = error
                         return
@@ -296,11 +300,26 @@ class VaspParser(Parser):
         if user_config.kpoints_from_ibzkpt:
             parse_and_add('IBZKPT', KpointsParser, required=True)
 
+        # Post-process the parsed quantities, emit warning messages and remove those that are marked are excluded
         exit_code = self._post_process_quantities()
         if exit_code is not None:
             return exit_code
 
-        return self._create_outputs()
+        # Create the outputs - even if the calculation contains errors, we still want to create the outputs
+        exit_code = self._create_outputs()
+        if exit_code is not None:
+            return exit_code
+
+        # Check for VASP errors
+        if self.user_config.check_errors is True:
+            exit_code = self._check_vasp_errors(self.parser_notifications)
+            if exit_code is not None:
+                return exit_code
+
+        # Finally Check if the required quantities are present
+        exit_code = self._check_required_quantities()
+
+        return exit_code
 
     def _create_outputs(self):
         """Create the output nodes"""
@@ -329,10 +348,6 @@ class VaspParser(Parser):
             and self.user_config.check_completeness is True
         ):
             return self.exit_codes.ERROR_NOT_ABLE_TO_CREATE_NODE.format(nodes=', '.join(self._failed_to_compose.keys()))
-        # Check for errors
-        if self.user_config.check_errors is True:
-            error = self._check_vasp_errors(self.parser_notifications)
-            return error
 
     def _compose_misc(self, quantities_each):
         """Compose the `misc` output node"""
@@ -503,6 +518,25 @@ class VaspParser(Parser):
             return self.exit_codes.ERROR_DIAGNOSIS_OUTPUTS_MISSING
         run_status = quantities['run_status']
 
+        # Check for the existence of critical warnings
+        # We check for notifications first as they are in STDOUT and are the easiest to decipher
+        if 'notifications' in quantities:
+            notifications = quantities['notifications']
+            ignore_all = self.user_config.ignore_notification_errors
+            if not ignore_all:
+                composer = NotificationComposer(
+                    notifications,
+                    quantities['run_status'],
+                    self.node.inputs,
+                    self.exit_codes,
+                    critical_notifications=self.user_config.critical_notification_errors,
+                )
+                exit_code = composer.compose()
+                if exit_code is not None:
+                    return exit_code
+        else:
+            self.logger.warning('WARNING: missing notification output for VASP warnings and errors.')
+
         try:
             # We have an overflow in the XML file which is critical, but not reported by VASP in
             # the standard output, so checking this here.
@@ -525,24 +559,6 @@ class VaspParser(Parser):
             if self.user_config.check_ionic_convergence is True:
                 return self.exit_codes.ERROR_IONIC_NOT_CONVERGED
             self.logger.warning('The ionic relaxation is not converged, but the calculation is treated as successful.')
-
-        # Check for the existence of critical warnings
-        if 'notifications' in quantities:
-            notifications = quantities['notifications']
-            ignore_all = self.user_config.ignore_notification_errors
-            if not ignore_all:
-                composer = NotificationComposer(
-                    notifications,
-                    quantities['run_status'],
-                    self.node.inputs,
-                    self.exit_codes,
-                    critical_notifications=self.user_config.critical_notification_errors,
-                )
-                exit_code = composer.compose()
-                if exit_code is not None:
-                    return exit_code
-        else:
-            self.logger.warning('WARNING: missing notification output for VASP warnings and errors.')
 
         return None
 

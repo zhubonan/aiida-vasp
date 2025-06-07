@@ -65,14 +65,17 @@ class BaseFileParser:
     PARSABLE_QUANTITIES = {}
     DEFAULT_SETTINGS = {'quantities_to_parse': []}
 
-    def __init__(self, *, handler=None, data=None, settings=None, options=None):  # pylint: disable=unused-argument, missing-function-docstring
+    def __init__(self, *, handler=None, data=None, settings=None, options=None, logger=None):  # pylint: disable=unused-argument, missing-function-docstring
         super().__init__()
         # Make sure we only accept initialization with either ``handler`` or ``data``.
         if (handler is not None and data is not None) or (handler is None and data is None):
             raise TypeError('Supply at bare minimum either argument handler or data to initialize parser.')
 
         # Make sure logger messages in the parser are passed to the AiiDA logger.
-        self._logger = AIIDA_LOGGER.getChild(self.__class__.__name__)
+        if logger is None:
+            self._logger = AIIDA_LOGGER.getChild(self.__class__.__name__)
+        else:
+            self._logger = logger
 
         # What quantities the specific content parser can provide.
         self._parsable_quantities = self.PARSABLE_QUANTITIES

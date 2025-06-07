@@ -1285,6 +1285,61 @@ class VaspWorkChain(BaseRestartWorkChain, WithBuilderUpdater):
             )  # pylint: disable=no-member
         return None
 
+    @process_handler(priority=600, enabled=True)
+    def handle_zbrent(self, node):
+        """Handle ZBRNET error"""
+        misc = node.outputs.misc.get_dict()
+        notifications = misc.get('notifications', [])
+        if any(item['name'] == 'zbrent' for item in notifications):
+            self.report('zbrent error detected - switching to IBRION=1')
+            self.ctx.inputs.parameters['ibrion'] = 1
+            if 'structure' in node.outputs:
+                self.ctx.inputs.structure = node.outputs.structure
+                self.report('Using the last structure as input for the next iteration')
+            return ProcessHandlerReport(do_break=True)
+
+    @process_handler(priority=600, enabled=True)
+    def handle_symmetry_related_errors(self, node):
+        """Handle symmetry relaxted error"""
+        misc = node.outputs.misc.get_dict()
+        notifications = misc.get('notifications', [])
+        valid_cases = ['ibzkpt_point_group', 'inconsistent_lattice_types', 'sgrcon_6']
+        if any(item['name'] in valid_cases for item in notifications):
+            self.report('Symmetry error detected - setting SYMPREC to 1/10 of the current value')
+            self.ctx.inputs.parameters['symprec'] = self.ctx.inputs.parameters['symprec'] / 10
+            return ProcessHandlerReport(do_break=True)
+
+    @process_handler(priority=600, enabled=True)
+    def handle_kset_change(self, node):
+        """Handle symmetry relaxted error"""
+        misc = node.outputs.misc.get_dict()
+        notifications = misc.get('notifications', [])
+        if any(item['name'] == 'kset_change' for item in notifications):
+            self.report('NPAR must equal to the number of processors - setting NCORE to 1')
+            self.ctx.inputs.parameters['ncore'] = 1
+            self.ctx.inputs.parameters.pop('npar', None)
+            return ProcessHandlerReport(do_break=True)
+
+    @process_handler(priority=600, enabled=True)
+    def handle_no_enough_bands(self, node):
+        """Handle eorrr where no enough bands in the calculation"""
+        import re
+
+        misc = node.outputs.misc.get_dict()
+        notifications = misc.get('notifications', [])
+        if any(item['name'] == 'bandocc' for item in notifications):
+            outcar = node.outputs.retrieved.get_object_content('OUTCAR')
+            # Search for NBANDS=XXX pattern
+            match = re.search(r'NBANDS *= *(\d+)', outcar)
+            if match:
+                nbands = int(int(match.group(1)) * 1.2)
+            else:
+                self.report('Cannot obtain the number of bands')
+                return ProcessHandlerReport(exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED, do_break=True)
+            self.report('Increasing the number of bands to: {nbands}')
+            self.ctx.inputs.parameters['nbands'] = nbands
+            return ProcessHandlerReport(do_break=True)
+
     # In this workchain we default to ignore the NELM breaches in the middle of the calculation
     @process_handler(priority=850, enabled=True)
     def ignore_nelm_breach_relax(self, node):
