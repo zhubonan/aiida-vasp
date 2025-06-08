@@ -50,11 +50,6 @@ class StreamParser(BaseFileParser):
         except SystemExit:
             self._logger.warning('Parsevasp exited abnormally.')
 
-        # Parse additional errors
-        handler.seek(0)
-        lines = handler.read().split('\n')
-        self.captured_error_box = parse_vasp6_error_box(lines)
-
     @property
     def notifications(self):
         """
@@ -79,25 +74,6 @@ class StreamParser(BaseFileParser):
             else:
                 regex = item.regex
             notifications.append({'name': item.shortname, 'kind': item.kind, 'message': item.message, 'regex': regex})
-
-        # Additional handling - this should be incorporated into parsevasp!
-        if hasattr(self, 'captured_error_box') and self.captured_error_box:
-            duplicated = False
-            # Check if we found this error already
-            for item in notifications:
-                if any(re.match(item['regex'], line) for line in self.captured_error_box):
-                    duplicated = True
-                    break
-            if not duplicated:
-                notifications.append(
-                    {
-                        'name': 'generic_box_error',
-                        'kind': 'error',
-                        'message': '\n'.join(self.captured_error_box),
-                        'regex': self.captured_error_box[0],
-                    }
-                )
-
         return notifications
 
     @property
@@ -149,26 +125,3 @@ class StreamParser(BaseFileParser):
 
         number_of_entries = len(self._content_parser)
         return number_of_entries
-
-
-def parse_vasp6_error_box(lines: list) -> list:
-    """
-    Parse the error box from VASP6.
-    :param lines: The lines to parse.
-    :returns: Lines inside the captured error box
-    """
-
-    capture = False
-    captured = []
-    for line in lines:
-        if line.startswith(r'|     EEEEEEE  R     R  R     R  OOOOOOO  R     R     ###     ###     ###     |'):
-            capture = True
-            continue
-        elif capture and line.startswith(r'|       ---->  I REFUSE TO CONTINUE WITH THIS SICK JOB ... BYE!!! <----'):
-            capture = False
-            break
-        if capture:
-            content = line[1:-1].strip()
-            if content:
-                captured.append(content)
-    return captured
