@@ -7,7 +7,6 @@ for VASP related notification, warnings, and errors.
 import re
 
 from aiida import orm
-from aiida.common.exceptions import NotExistent
 from parsevasp.stream import Stream
 from tqdm import tqdm
 
@@ -130,21 +129,27 @@ class StreamParser(BaseFileParser):
         return number_of_entries
 
 
-def scan_for_vasp_errors(only_none_zero=False, print_yaml=False):
+def scan_for_vasp_errors(only_none_zero=False, print_yaml=False, ignore_errors=False):
     """
-    Scan uncaptured VASP errors
+    Scan for unidentified errors in `vasp_outputs` stored in the database.
+    The results can be added to the stream.yaml file in parsevasp.
+
     :param only_none_zero: Only print errors with exit_status != 0
     :param print_yaml: Print the YAML representation of the errors
+    :param ignore_errors: Ignore errors while parsing
     :return: A dictionary of errors
     """
+
+    calc_filter = {
+        'attributes.process_label': 'VaspCalculation',
+    }
+    if only_none_zero:
+        calc_filter['attributes.exit_status'] = {'!==': 0}
 
     q = orm.QueryBuilder()
     q.append(
         orm.CalcJobNode,
-        filters={
-            'attributes.process_label': 'VaspCalculation',
-            'attributes.exit_status': {'!==': 0},
-        },
+        filters=calc_filter,
         tag='calc',
         project=['*', 'attributes.exit_status'],
     )
@@ -157,8 +162,10 @@ def scan_for_vasp_errors(only_none_zero=False, print_yaml=False):
         try:
             with retrieved.base.repository.open('vasp_output', 'r') as handle:
                 parser = Stream(file_handler=handle)
-        except NotExistent:
-            print(f'No vasp output found for {calc.uuid}')
+        except Exception as error:
+            if not ignore_errors:
+                raise error
+            print(f'Cannot process vasp output found for {calc.uuid}')
         for item in parser.entries:
             if item.shortname == 'generic_box_error':
                 generic_errors[item.regex.pattern] = item
