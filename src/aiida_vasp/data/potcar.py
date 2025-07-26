@@ -1066,3 +1066,22 @@ class PotcarData(Data, PotcarMetadataMixin, VersioningMixin):
 
         results.sort(key=cmp_to_key(by_older))
         return results
+
+    def get_num_valence_electrons(self):
+        """Return the number of valence electrons"""
+
+        # Check if we have computed the valence for this file node
+        valence = self.base.extras.get('valence', None)
+        # If we valence is unknown, inspect the file node to obtain
+        # the valence
+        if valence is None:
+            try:
+                file_node = self.find_file_node()
+            except NotExistent:
+                self.logger.warning(f'Cannot found PotcarFileData for {self} to obtain the valence of this POTCAR.')
+                return None
+            with file_node.base.repository.open('POTCAR') as fh:
+                fh.readline()
+                valence = float(fh.readline())
+            self.base.extras.set('valence', valence)
+        return valence
