@@ -68,7 +68,7 @@ from aiida_vasp.protocols.generator import VaspRelaxInputGenerator
 
 upd = VaspRelaxInputGenerator()
 # Override the vasp.potential_family input of the builder
-upd.get_builder(structure=si_node, code='mock-vasp@localhost', overrides={
+upd.build(structure=si_node, code='mock-vasp@localhost', overrides={
    'vasp': {'potential_family': 'PBE.EXAMPLE'}}
    )
 upd.builder

@@ -205,7 +205,7 @@ class NebParser(VaspParser):
                     return None
                 for key, value in traj_data.items():
                     if key == 'symbols':
-                        node.base.attributes.set(key, list(value))
+                        node.base.attributes.set(key, value.tolist() if hasattr(value, 'tolist') else list(value))
                     else:
                         node.set_array(key, value)
                 output['image_' + index] = node

@@ -41,6 +41,365 @@ SITE_MAG_THRESHOLD = 0  # Threshold for considering a site to be magnetic
 logger = getLogger(__name__)
 
 
+class VaspNscfWorkChain(WorkChain, ProtocolMixin):
+    """
+    Reusable semilocal SCF/NSCF execution workchain.
+
+    This workchain performs:
+
+    1. An optional SCF calculation.
+    2. A non-SCF band-structure calculation.
+    3. An optional DOS calculation.
+
+    It deliberately does not perform any structural relaxation or path generation.
+    """
+
+    _base_wk_string = 'vasp.v2.vasp'
+    _base_workchain = VaspWorkChain
+    _protocol_tag = 'band'
+    option_class = BandOptions
+
+    @classmethod
+    def define(cls, spec: Any) -> None:
+        """Initialise the WorkChain class."""
+        super().define(spec)
+        base_work = WorkflowFactory(cls._base_wk_string)
+
+        spec.input('structure', help='The input structure', valid_type=orm.StructureData)
+        spec.input(
+            'bs_kpoints',
+            help='Explicit kpoints for the bands calculation.',
+            valid_type=orm.KpointsData,
+            required=False,
+        )
+        spec.input(
+            'band_settings',
+            help=BandOptions.aiida_description(),
+            valid_type=orm.Dict,
+            validator=BandOptions.aiida_validate,
+            serializer=BandOptions.aiida_serialize,
+        )
+        spec.expose_inputs(
+            base_work,
+            namespace='scf',
+            exclude=('structure',),
+            namespace_options={
+                'required': True,
+                'populate_defaults': True,
+                'help': 'Inputs for SCF workchain, mandatory',
+            },
+        )
+        spec.expose_inputs(
+            base_work,
+            namespace='bands',
+            exclude=('structure', 'kpoints'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for bands calculation, if needed',
+            },
+        )
+        spec.expose_inputs(
+            base_work,
+            namespace='dos',
+            exclude=('structure',),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for DOS calculation, if needed',
+            },
+        )
+        spec.input(
+            'clean_children_workdir',
+            valid_type=orm.Str,
+            serializer=to_aiida_type,
+            help='What part of the called children to clean',
+            required=False,
+            default=lambda: orm.Str('none'),
+        )
+        spec.input(
+            'chgcar',
+            required=False,
+            valid_type=ChargedensityData,
+            help='Explicit CHGCAR file used for DOS/Bands calculations',
+        )
+        spec.input(
+            'restart_folder',
+            required=False,
+            valid_type=orm.RemoteData,
+            help='A remote folder containing the CHGCAR file to be used',
+        )
+        spec.outline(
+            cls.setup,
+            if_(cls.should_run_scf)(
+                cls.run_scf,
+                cls.verify_scf,
+            ),
+            cls.run_bands_dos,
+            cls.inspect_bands_dos,
+        )
+
+        spec.output('band_structure', required=False, help='Computed band structure with labels')
+        spec.output('dos', required=False)
+        spec.output('projectors', required=False)
+
+        spec.exit_code(401, 'ERROR_NO_RESTART_SOURCE', message='No CHGCAR or restart folder available for NSCF runs.')
+        spec.exit_code(402, 'ERROR_SUB_PROC_SCF_FAILED', message='SCF workchain failed')
+        spec.exit_code(403, 'ERROR_SUB_PROC_BANDS_FAILED', message='Band structure workchain failed')
+        spec.exit_code(404, 'ERROR_SUB_PROC_DOS_FAILED', message='DOS workchain failed')
+
+    def get_appended_label(self, suffix):
+        """Return a label with appended suffix."""
+        return (self.inputs.metadata.get('label', '') or '') + ' ' + suffix
+
+    @classmethod
+    def get_builder_from_protocol(
+        cls,
+        code: orm.AbstractCode,
+        structure: orm.StructureData,
+        protocol=None,
+        overrides=None,
+        options=None,
+        band_settings=None,
+        **kwargs,
+    ):
+        """Construct a builder with native SCF/NSCF namespaces."""
+        overrides = overrides or {}
+        inputs = cls.get_protocol_inputs(protocol, overrides)
+        if band_settings:
+            inputs['band_settings'] = recursive_merge(inputs.get('band_settings'), band_settings)
+
+        scf_builder = cls._base_workchain.get_builder_from_protocol(
+            code=code,
+            structure=structure,
+            protocol=inputs.get('scf', {}).get('protocol', protocol),
+            overrides=inputs.get('scf', {}),
+            options=options,
+            **kwargs,
+        )
+        scf_builder.pop('structure')
+
+        builder = cls.get_builder()
+        builder.structure = structure
+        builder.scf = scf_builder
+        if inputs.get('bands'):
+            builder.bands = inputs.get('bands')
+        if inputs.get('dos'):
+            builder.dos = inputs.get('dos')
+        if inputs.get('band_settings'):
+            builder.band_settings = inputs.get('band_settings')
+        if inputs.get('clean_children_workdir'):
+            builder.clean_children_workdir = inputs.get('clean_children_workdir')
+        return builder
+
+    def select_chgcar_from_inputs(self) -> None:
+        """Setup CHGCAR from inputs."""
+        if self.inputs.get('chgcar'):
+            self.ctx.chgcar = self.inputs.chgcar
+            self.report(f'Using CHGCAR {self.inputs.chgcar} from input')
+        else:
+            self.ctx.chgcar = None
+
+        if self.inputs.get('restart_folder'):
+            self.ctx.restart_folder = self.inputs.restart_folder
+            self.report(f'Using remote folder {self.inputs.restart_folder} for restart')
+        else:
+            self.ctx.restart_folder = None
+
+    def setup(self) -> None:
+        """Setup the calculation."""
+        self.ctx.current_structure = self.inputs.structure
+        self.ctx.bs_kpoints = self.inputs.get('bs_kpoints')
+        self.select_chgcar_from_inputs()
+
+    def should_run_scf(self) -> bool:
+        """Whether the SCF calculation should be run."""
+        return not (self.ctx.chgcar or self.ctx.restart_folder)
+
+    def run_scf(self) -> None:
+        """Run the SCF calculation."""
+        base_work = WorkflowFactory(self._base_wk_string)
+        inputs = AttributeDict(self.exposed_inputs(base_work, namespace='scf'))
+        inputs.metadata.call_link_label = 'scf'
+        inputs.metadata.label = self.get_appended_label('SCF')
+        inputs.structure = self.ctx.current_structure
+
+        if not inputs.get('keep_last_workdir', False):
+            inputs.keep_last_workdir = orm.Bool(True)
+
+        pdict = inputs.parameters.get_dict()
+        if (pdict[OVERRIDE_NAMESPACE].get('lcharg') is False) or (pdict[OVERRIDE_NAMESPACE].get('LCHARG') is False):
+            pdict[OVERRIDE_NAMESPACE]['lcharg'] = True
+            inputs.parameters = orm.Dict(dict=pdict)
+            self.report('Correction: setting LCHARG to True')
+
+        running = self.submit(base_work, **inputs)
+        self.report(f'Running SCF calculation {running}')
+        self.to_context(workchain_scf=running)
+
+    def verify_scf(self) -> Any:
+        """Inspect the SCF calculation."""
+        scf_workchain = self.ctx.workchain_scf
+        if not scf_workchain.is_finished_ok:
+            self.report('SCF workchain finished with Error')
+            return self.exit_codes.ERROR_SUB_PROC_SCF_FAILED
+
+        if 'chgcar' in scf_workchain.outputs:
+            self.ctx.chgcar = scf_workchain.outputs.chgcar
+        else:
+            self.ctx.chgcar = None
+        self.ctx.restart_folder = scf_workchain.outputs.remote_folder
+        self.report(f'SCF calculation {scf_workchain} completed')
+        return None
+
+    def run_bands_dos(self) -> Any:
+        """Run the bands and DOS calculations."""
+        base_work = WorkflowFactory(self._base_wk_string)
+
+        inputs = AttributeDict(self.exposed_inputs(base_work, namespace='scf'))
+        inputs.structure = self.ctx.current_structure
+
+        if self.ctx.restart_folder:
+            inputs.restart_folder = self.ctx.restart_folder
+
+        if self.ctx.chgcar:
+            inputs.chgcar = self.ctx.chgcar
+
+        if not (inputs.get('restart_folder') or inputs.get('chgcar')):
+            self.report('One of restart_folder or chgcar must be set for non-SCF calculations')
+            return self.exit_codes.ERROR_NO_RESTART_SOURCE
+
+        running = {}
+        only_dos = self.inputs.band_settings['only_dos']
+
+        if only_dos is False:
+            if 'bands' in self.inputs:
+                bands_input = AttributeDict(self.exposed_inputs(base_work, namespace='bands'))
+            else:
+                bands_input = AttributeDict(
+                    {
+                        'settings': orm.Dict(dict={'parser_settings': {'include_node': ['bands']}}),
+                        'parameters': orm.Dict(dict={'charge': {'constant_charge': True}}),
+                    }
+                )
+
+            parameters = inputs.parameters.get_dict()
+            bands_parameters = bands_input.parameters.get_dict()
+
+            if 'charge' in bands_parameters:
+                bands_parameters['charge']['constant_charge'] = True
+            else:
+                bands_parameters['charge'] = {'constant_charge': True}
+
+            update_nested_dict(parameters, bands_parameters)
+
+            inputs.update(bands_input)
+            inputs.parameters = orm.Dict(dict=parameters)
+
+            settings = inputs.get('settings')
+            essential = {'parser_settings': {'include_node': ['bands']}}
+            if settings is None:
+                inputs.settings = orm.Dict(dict=essential)
+            else:
+                inputs.settings = update_nested_dict_node(settings, essential, extend_list=True)
+
+            inputs.kpoints = self.ctx.bs_kpoints
+            inputs.metadata.label = self.get_appended_label('BS')
+            inputs.metadata.call_link_label = 'bs'
+
+            bands_calc = self.submit(base_work, **inputs)
+            running['bands_workchain'] = bands_calc
+            self.report(f'Submitted workchain {bands_calc} for band structure')
+
+        if self.inputs.band_settings['run_dos'] or ('dos' in self.inputs):
+            if 'dos' in self.inputs:
+                dos_input = AttributeDict(self.exposed_inputs(base_work, namespace='dos'))
+            else:
+                dos_input = AttributeDict(
+                    {
+                        'parameters': orm.Dict(dict={'charge': {'constant_charge': True}}),
+                    }
+                )
+                dos_kpoints = orm.KpointsData()
+                dos_kpoints.set_cell_from_structure(self.ctx.current_structure)
+                dos_kpoints.set_kpoints_mesh_from_density(self.inputs.band_settings['dos_kpoints_distance'] * 2 * np.pi)
+                dos_input.kpoints = dos_kpoints
+
+            parameters = inputs.parameters.get_dict()
+            dos_parameters = dos_input.parameters.get_dict()
+            update_nested_dict(parameters, dos_parameters)
+
+            if 'charge' in dos_parameters:
+                dos_parameters['charge']['constant_charge'] = True
+            else:
+                dos_parameters['charge'] = {'constant_charge': True}
+
+            inputs.update(dos_input)
+            inputs.parameters = orm.Dict(dict=parameters)
+
+            if 'dos' not in self.inputs:
+                settings = inputs.get('settings')
+                essential = {'parser_settings': {'include_node': ['dos', 'bands']}}
+
+                if settings is None:
+                    inputs.settings = orm.Dict(dict=essential)
+                else:
+                    inputs.settings = update_nested_dict_node(settings, essential, extend_list=True)
+
+            inputs.metadata.label = self.get_appended_label('DOS')
+            inputs.metadata.call_link_label = 'dos'
+
+            dos_calc = self.submit(base_work, **inputs)
+            running['dos_workchain'] = dos_calc
+            self.report(f'Submitted workchain {dos_calc} for DOS')
+
+        return self.to_context(**running)
+
+    def inspect_bands_dos(self) -> Any:
+        """Inspect the bands and DOS calculations."""
+        exit_code = None
+
+        if 'bands_workchain' in self.ctx:
+            bands = self.ctx.bands_workchain
+            if not bands.is_finished_ok:
+                self.report(f'Bands calculation finished with error, exit_status: {bands}')
+                exit_code = self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
+            else:
+                self.out(
+                    'band_structure',
+                    compose_labelled_bands(bands.outputs.bands, bands.inputs.kpoints),
+                )
+
+        if 'dos_workchain' in self.ctx:
+            dos = self.ctx.dos_workchain
+            if not dos.is_finished_ok:
+                self.report(f'DOS calculation finished with error, exit_status: {dos.exit_status}')
+                exit_code = self.exit_codes.ERROR_SUB_PROC_DOS_FAILED
+            else:
+                self.out('dos', dos.outputs.dos)
+                if 'projectors' in dos.outputs:
+                    self.out('projectors', dos.outputs.projectors)
+
+        return exit_code
+
+    def on_terminated(self) -> None:
+        """Clean the remote directories of called children."""
+        super().on_terminated()
+
+        if self.inputs.clean_children_workdir.value != 'none':
+            cleaned_calcs = []
+            for called_descendant in self.node.called_descendants:
+                if isinstance(called_descendant, orm.CalcJobNode):
+                    try:
+                        called_descendant.outputs.remote_folder._clean()  # pylint: disable=protected-access
+                        cleaned_calcs.append(called_descendant.pk)
+                    except (OSError, KeyError):
+                        pass
+
+            if cleaned_calcs:
+                self.report(f'cleaned remote folders of calculations: {" ".join(map(str, cleaned_calcs))}')
+
+
 class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
     """
     Workchain for running bands calculations.
@@ -74,6 +433,7 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
 
     _base_wk_string = 'vasp.v2.vasp'
     _base_workchain = VaspWorkChain
+    _nscf_workchain = VaspNscfWorkChain
     _relax_wk_string = 'vasp.v2.relax'
     _relax_workchain = VaspRelaxWorkChain
     _protocol_tag = 'band'
@@ -167,12 +527,9 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
                 cls.verify_relax,
             ),
             if_(cls.should_generate_path)(cls.generate_path),
-            if_(cls.should_run_scf)(
-                cls.run_scf,
-                cls.verify_scf,
-            ),
-            cls.run_bands_dos,
-            cls.inspect_bands_dos,
+            cls.run_nscf,
+            cls.inspect_nscf,
+            cls.results,
         )
 
         spec.output(
@@ -218,7 +575,7 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         overrides = overrides or {}
         inputs = cls.get_protocol_inputs(protocol, overrides)
         if band_settings:
-            overrides['band_settings'] = recursive_merge(overrides.get('band_settings'), band_settings)
+            inputs['band_settings'] = recursive_merge(inputs.get('band_settings'), band_settings)
 
         scf_builder = cls._base_workchain.get_builder_from_protocol(
             code=code,
@@ -250,26 +607,16 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         builder.structure = structure
         if relax_builder is not None:
             builder.relax = relax_builder
+        if inputs.get('bands'):
+            builder.bands = inputs.get('bands')
+        if inputs.get('dos'):
+            builder.dos = inputs.get('dos')
         if inputs.get('band_settings'):
             builder.band_settings = inputs.get('band_settings')
         if inputs.get('clean_children_workdir'):
             builder.clean_children_workdir = inputs.get('clean_children_workdir')
 
         return builder
-
-    def select_chgcar_from_inputs(self) -> None:
-        """Setup CHGCAR from inputs"""
-        if self.inputs.get('chgcar'):
-            self.ctx.chgcar = self.inputs.chgcar
-            self.report(f'Using CHGCAR {self.inputs.chgcar} from input')
-        else:
-            self.ctx.chgcar = None
-
-        if self.inputs.get('restart_folder'):
-            self.ctx.restart_folder = self.inputs.restart_folder
-            self.report(f'Using remote folder {self.inputs.restart_folder} for restart')
-        else:
-            self.ctx.restart_folder = None
 
     def setup(self) -> None:
         """Setup the calculation"""
@@ -320,13 +667,6 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
 
         # Use the relaxed structure as the current structure
         self.ctx.current_structure = relax_workchain.outputs.relax.structure
-
-    def should_run_scf(self) -> bool:
-        """Wether we should run SCF calculation"""
-        # Setup the CHGCAR and remote folder input if necessary
-        self.select_chgcar_from_inputs()
-        # Only need to run SCF calculation when no explicity CHGCAR or folder set
-        return not (self.ctx.chgcar or self.ctx.restart_folder)
 
     def should_generate_path(self) -> bool:
         """
@@ -410,202 +750,60 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         if 'parameters' in kpath_results:
             self.out('seekpath_parameters', kpath_results['parameters'])
 
-    def run_scf(self) -> None:
-        """
-        Run the SCF calculation
-        """
-
-        base_work = WorkflowFactory(self._base_wk_string)
-        inputs = AttributeDict(self.exposed_inputs(base_work, namespace='scf'))
-        inputs.metadata.call_link_label = 'scf'
-        inputs.metadata.label = self.get_appended_label('SCF')
+    def run_nscf(self) -> Any:
+        """Run the reusable NSCF workchain."""
+        inputs = AttributeDict()
+        inputs.metadata = {'call_link_label': 'nscf', 'label': self.get_appended_label('NSCF')}
         inputs.structure = self.ctx.current_structure
+        inputs.band_settings = self.inputs.band_settings
+        inputs.scf = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='scf'))
 
-        # Turn off cleaning of the working directory
-        if not inputs.get('keep_last_workdir', False):
-            inputs.keep_last_workdir = orm.Bool(True)
-
-        # Ensure that writing the CHGCAR file is on
-        pdict = inputs.parameters.get_dict()
-        if (pdict[OVERRIDE_NAMESPACE].get('lcharg') is False) or (pdict[OVERRIDE_NAMESPACE].get('LCHARG') is False):
-            pdict[OVERRIDE_NAMESPACE]['lcharg'] = True
-            inputs.parameters = orm.Dict(dict=pdict)
-            self.report('Correction: setting LCHARG to True')
-
-        # Take magmom from the context, in case that the magmom is rearranged in the primitive cell
         magmom = self.ctx.get('magmom')
         if magmom:
-            inputs.parameters = update_nested_dict_node(inputs.parameters, {OVERRIDE_NAMESPACE: {'magmom': magmom}})
+            inputs.scf.parameters = update_nested_dict_node(inputs.scf.parameters, {OVERRIDE_NAMESPACE: {'magmom': magmom}})
 
-        running = self.submit(base_work, **inputs)
-        self.report(f'Running SCF calculation {running}')
-        self.to_context(workchain_scf=running)
+        if self.ctx.get('bs_kpoints') is not None:
+            inputs.bs_kpoints = self.ctx.bs_kpoints
 
-    def verify_scf(self) -> Any:
-        """Inspect the SCF calculation"""
-        scf_workchain = self.ctx.workchain_scf
-        if not scf_workchain.is_finished_ok:
-            self.report('SCF workchain finished with Error')
-            return self.exit_codes.ERROR_SUB_PROC_SCF_FAILED
+        if 'bands' in self.inputs:
+            inputs.bands = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='bands'))
 
-        # Store the charge density or remote reference
-        if 'chgcar' in scf_workchain.outputs:
-            self.ctx.chgcar = scf_workchain.outputs.chgcar
-        else:
-            self.ctx.chgcar = None
-        self.ctx.restart_folder = scf_workchain.outputs.remote_folder
-        self.report(f'SCF calculation {scf_workchain} completed')
+        if 'dos' in self.inputs:
+            inputs.dos = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='dos'))
 
-    def run_bands_dos(self) -> Any:
-        """Run the bands and the DOS calculations"""
-        base_work = WorkflowFactory(self._base_wk_string)
+        if 'chgcar' in self.inputs:
+            inputs.chgcar = self.inputs.chgcar
 
-        # Use the SCF inputs as the base
-        inputs = AttributeDict(self.exposed_inputs(base_work, namespace='scf'))
-        inputs.structure = self.ctx.current_structure
+        if 'restart_folder' in self.inputs:
+            inputs.restart_folder = self.inputs.restart_folder
 
-        if self.ctx.restart_folder:
-            inputs.restart_folder = self.ctx.restart_folder
+        if 'clean_children_workdir' in self.inputs:
+            inputs.clean_children_workdir = self.inputs.clean_children_workdir
 
-        if self.ctx.chgcar:
-            inputs.chgcar = self.ctx.chgcar
+        running = self.submit(self._nscf_workchain, **inputs)
+        return self.to_context(workchain_nscf=running)
 
-        if not (inputs.get('restart_folder') or inputs.get('chgcar')):
-            raise RuntimeError('One of the restart_folder or chgcar must be set for non-scf calculations')
+    def inspect_nscf(self) -> Any:
+        """Inspect the NSCF child workflow."""
+        nscf_workchain = self.ctx.workchain_nscf
+        if not nscf_workchain.is_finished_ok:
+            exit_status = nscf_workchain.exit_status
+            self.report(f'NSCF workchain finished with Error, exit_status={exit_status}')
+            if exit_status == self._nscf_workchain.exit_codes.ERROR_SUB_PROC_SCF_FAILED.status:
+                return self.exit_codes.ERROR_SUB_PROC_SCF_FAILED
+            if exit_status == self._nscf_workchain.exit_codes.ERROR_SUB_PROC_BANDS_FAILED.status:
+                return self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
+            if exit_status == self._nscf_workchain.exit_codes.ERROR_SUB_PROC_DOS_FAILED.status:
+                return self.exit_codes.ERROR_SUB_PROC_DOS_FAILED
+            return self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
+        return None
 
-        running = {}
-
-        only_dos = self.inputs.band_settings['only_dos']
-
-        if only_dos is False:
-            if 'bands' in self.inputs:
-                bands_input = AttributeDict(self.exposed_inputs(base_work, namespace='bands'))
-            else:
-                bands_input = AttributeDict(
-                    {
-                        'settings': orm.Dict(dict={'parser_settings': {'include_node': ['bands']}}),
-                        'parameters': orm.Dict(dict={'charge': {'constant_charge': True}}),
-                    }
-                )
-
-            # Special treatment - combine the parameters
-            parameters = inputs.parameters.get_dict()
-            bands_parameters = bands_input.parameters.get_dict()
-
-            if 'charge' in bands_parameters:
-                bands_parameters['charge']['constant_charge'] = True
-            else:
-                bands_parameters['charge'] = {'constant_charge': True}
-
-            update_nested_dict(parameters, bands_parameters)
-
-            # Apply updated parameters
-            inputs.update(bands_input)
-            inputs.parameters = orm.Dict(dict=parameters)
-
-            # Check if add_bands
-            settings = inputs.get('settings')
-            essential = {'parser_settings': {'include_node': ['bands']}}
-            if settings is None:
-                inputs.settings = orm.Dict(dict=essential)
-            else:
-                inputs.settings = update_nested_dict_node(settings, essential, extend_list=True)
-
-            # Swap with the default kpoints generated
-            inputs.kpoints = self.ctx.bs_kpoints
-
-            # Tag the calculation
-            inputs.metadata.label = self.get_appended_label('BS')
-            inputs.metadata.call_link_label = 'bs'
-
-            bands_calc = self.submit(base_work, **inputs)
-            running['bands_workchain'] = bands_calc
-            self.report(f'Submitted workchain {bands_calc} for band structure')
-
-        # Do DOS calculation if dos input namespace is populated or a
-        # dos_kpoints input is passed.
-        if (self.inputs.band_settings['run_dos']) or ('dos' in self.inputs):
-            if 'dos' in self.inputs:
-                dos_input = AttributeDict(self.exposed_inputs(base_work, namespace='dos'))
-            else:
-                dos_input = AttributeDict(
-                    {
-                        'parameters': orm.Dict(dict={'charge': {'constant_charge': True}}),
-                    }
-                )
-                # Use the supplied kpoints density for DOS
-                dos_kpoints = orm.KpointsData()
-                dos_kpoints.set_cell_from_structure(self.ctx.current_structure)
-                dos_kpoints.set_kpoints_mesh_from_density(self.inputs.band_settings['dos_kpoints_distance'] * 2 * np.pi)
-                dos_input.kpoints = dos_kpoints
-
-            # Special treatment - combine the parameters
-            parameters = inputs.parameters.get_dict()
-            dos_parameters = dos_input.parameters.get_dict()
-            update_nested_dict(parameters, dos_parameters)
-
-            # Ensure we start from constant charge
-            if 'charge' in dos_parameters:
-                dos_parameters['charge']['constant_charge'] = True
-            else:
-                dos_parameters['charge'] = {'constant_charge': True}
-
-            # Apply updated parameters
-            inputs.update(dos_input)
-            inputs.parameters = orm.Dict(dict=parameters)
-
-            if 'dos' not in self.inputs:
-                # kindly add `add_dos` if the `dos` input namespace is not
-                # explicitly defined.
-                settings = inputs.get('settings')
-                essential = {'parser_settings': {'include_node': ['dos', 'bands']}}
-
-                if settings is None:
-                    inputs.settings = orm.Dict(dict=essential)
-                else:
-                    inputs.settings = update_nested_dict_node(settings, essential, extend_list=True)
-
-            # Set the label
-            inputs.metadata.label = self.get_appended_label('DOS')
-            inputs.metadata.call_link_label = 'dos'
-
-            dos_calc = self.submit(base_work, **inputs)
-            running['dos_workchain'] = dos_calc
-            self.report(f'Submitted workchain {dos_calc} for DOS')
-
-        return self.to_context(**running)
-
-    def inspect_bands_dos(self) -> Any:
-        """Inspect the bands and dos calculations"""
-
-        exit_code = None
-
-        if 'bands_workchain' in self.ctx:
-            bands = self.ctx.bands_workchain
-            if not bands.is_finished_ok:
-                self.report(f'Bands calculation finished with error, exit_status: {bands}')
-                exit_code = self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
-            self.out(
-                'band_structure',
-                compose_labelled_bands(bands.outputs.bands, bands.inputs.kpoints),
-            )
-        else:
-            bands = None
-
-        if 'dos_workchain' in self.ctx:
-            dos = self.ctx.dos_workchain
-            if not dos.is_finished_ok:
-                self.report(f'DOS calculation finished with error, exit_status: {dos.exit_status}')
-                exit_code = self.exit_codes.ERROR_SUB_PROC_DOS_FAILED
-
-            # Attach outputs
-            self.out('dos', dos.outputs.dos)
-            if 'projectors' in dos.outputs:
-                self.out('projectors', dos.outputs.projectors)
-        else:
-            dos = None
-
-        return exit_code
+    def results(self) -> None:
+        """Expose outputs from the NSCF child workchain."""
+        nscf_workchain = self.ctx.workchain_nscf
+        for name in ('band_structure', 'dos', 'projectors'):
+            if name in nscf_workchain.outputs:
+                self.out(name, nscf_workchain.outputs[name])
 
     def on_terminated(self) -> None:
         """

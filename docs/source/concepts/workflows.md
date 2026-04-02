@@ -187,6 +187,17 @@ This means one can quickly reuse the `parameters` from a single point calculatio
 
 See [this tutorial](#silicon_relax) for an example of how to run the {{ VaspRelaxWorkChain }}.
 
+The plugin also includes higher-level native relaxation flows built from
+`VaspRelaxWorkChain`:
+
+- `vasp.v2.staged_relax` for explicitly staged multi-step relaxation
+- `vasp.v2.double_relax` for two consecutive relaxations with optional stage-local overrides
+
+The staged workflow is useful when the input parameters, parser settings, or
+relaxation behaviour should change between stages.
+The double-relax workflow is the direct native equivalent of the common
+“relax, then relax again” pattern used in high-throughput studies.
+
 ### Band structure workflow
 
 The {{ VaspBandsWorkchain }} is a workflow for calculating the band structure of a material using VASP.
@@ -239,6 +250,28 @@ Set `kpoints_per_subpath` to a very large number  to run a single self-consisten
 :::
 
 See [this tutorial](#band_dos) for an example of how to run the {{ VaspBandsWorkchain }}.
+
+The plugin also includes `vasp.v2.relax_bands`, which makes the
+`relax -> scf -> bands` sequence explicit as a dedicated native workflow instead
+of relying on the optional `relax` namespace of `VaspBandsWorkChain`.
+
+### Materials Project style workflows
+
+Several bundled workflows now implement Materials Project style multi-stage logic
+directly in `aiida-vasp`:
+
+- `vasp.v2.mp_gga_double_relax`
+- `vasp.v2.mp_gga_relax_static`
+- `vasp.v2.mp_meta_gga_double_relax`
+- `vasp.v2.mp_meta_gga_relax_static`
+- `vasp.v2.mp24_double_relax`
+- `vasp.v2.mp24_relax_static`
+
+These workflows use the existing pymatgen adaptor inside `aiida-vasp` to extract
+stage-specific VASP inputs from the corresponding pymatgen VASP sets while keeping
+the orchestration native to AiiDA-VASP.
+In practice, this means the workflow topology was inspired by the equivalent
+`atomate2` flows, but no `atomate2` dependency is required to launch them.
 
 [vasp]: https://www.vasp.at
 [workchain]: https://aiida.readthedocs.io/projects/aiida-core/en/latest/concepts/workflows.html#work-chains

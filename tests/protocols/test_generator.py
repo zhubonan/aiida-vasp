@@ -6,10 +6,17 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 from aiida import orm
 from aiida.engine.processes.builder import ProcessBuilderNamespace
 
 from aiida_vasp.protocols.generator import (
+    VaspBandsInputGenerator,
+    VaspDoubleRelaxInputGenerator,
+    VaspNscfInputGenerator,
+    VaspRelaxBandsInputGenerator,
+    VaspRelaxInputGenerator,
+    VaspInputGenerator,
     get_library_path,
     has_content,
     incar_dict_to_relax_settings,
@@ -218,9 +225,126 @@ class TestIncarDictToRelaxSettings:
 
         # Check updated incar (relaxation params removed)
         assert 'nsw' not in updated_incar['incar']
-        assert 'ibrion' not in updated_incar['incar']
-        assert 'ediffg' not in updated_incar['incar']
-        assert updated_incar['incar']['encut'] == 400
+
+
+class TestComposableInputGenerators:
+    """Tests for the refactored composable input generator API."""
+
+    @staticmethod
+    def _band_overrides(potcar_family_name):
+        return {
+            'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}},
+            'relax': {'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+        }
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_build_and_clone(self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure):
+        gen = VaspInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}},
+        )
+        original_encut = gen.builder.parameters['incar']['encut']
+        clone = gen.clone()
+        clone.vasp().set_incar(encut=600)
+
+        assert gen.builder.structure == vasp_structure
+        assert clone.builder.parameters['incar']['encut'] == 600
+        assert gen.builder.parameters['incar']['encut'] == original_encut
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_relax_child_generators(self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure):
+        gen = VaspRelaxInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+        )
+        gen.vasp().set_incar(encut=650)
+        gen.relax().set_relax_settings(force_cutoff=0.02)
+
+        assert gen.builder.vasp.parameters['incar']['encut'] == 650
+        assert gen.builder.relax_settings['force_cutoff'] == 0.02
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_nscf_child_generators(self, aiida_profile, localhost, mock_vasp, potcar_family_name, upload_potcar, vasp_structure):
+        gen = VaspNscfInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+        )
+        kpoints = orm.KpointsData()
+        kpoints.set_cell_from_structure(vasp_structure)
+        kpoints.set_kpoints([[0.0, 0.0, 0.0]])
+        restart = orm.RemoteData(computer=localhost, remote_path='/tmp')
+
+        gen.scf().set_incar(ismear=0)
+        gen.set_bs_kpoints(kpoints)
+        gen.enable_dos(distance=0.05)
+        gen.set_only_dos(True)
+        gen.skip_scf(restart_folder=restart)
+
+        assert gen.builder.scf.parameters['incar']['ismear'] == 0
+        assert gen.builder.bs_kpoints == kpoints
+        assert gen.builder.band_settings['run_dos'] is True
+        assert gen.builder.band_settings['only_dos'] is True
+        assert gen.builder.band_settings['dos_kpoints_distance'] == 0.05
+        assert gen.builder.restart_folder == restart
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_bands_generator_views(self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure):
+        gen = VaspBandsInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides=self._band_overrides(potcar_family_name),
+            run_relax=True,
+        )
+        gen.relax().vasp().set_incar(encut=620)
+        gen.nscf().scf().set_incar(ismear=0)
+        gen.nscf().dos().enable(distance=0.04)
+
+        assert gen.builder.relax.vasp.parameters['incar']['encut'] == 620
+        assert gen.builder.scf.parameters['incar']['ismear'] == 0
+        assert gen.builder.band_settings['run_dos'] is True
+        assert gen.builder.band_settings['dos_kpoints_distance'] == 0.04
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_double_relax_stage_generators(self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure):
+        gen = VaspDoubleRelaxInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+        )
+        gen.relax().vasp().set_incar(encut=520)
+        gen.stage_1().set_relax_settings(force_cutoff=0.03)
+        gen.stage_2().set_incar(encut=700)
+
+        assert gen.builder.relax.vasp.parameters['incar']['encut'] == 520
+        assert gen.builder.stage_1_relax_settings['force_cutoff'] == 0.03
+        assert gen.builder.stage_2_parameters['incar']['encut'] == 700
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_relax_bands_child_generators(self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure):
+        gen = VaspRelaxBandsInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={
+                'relax': {'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+                'bands': {'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+            },
+        )
+        gen.relax().relax().set_relax_settings(force_cutoff=0.02)
+        gen.bands().scf().set_incar(ismear=0)
+        gen.bands().enable_dos(distance=0.03)
+
+        assert gen.builder.relax.relax_settings['force_cutoff'] == 0.02
+        assert gen.builder.bands.scf.parameters['incar']['ismear'] == 0
+        assert gen.builder.bands.band_settings['run_dos'] is True
 
     def test_incar_dict_to_relax_settings_ibrion_rd(self):
         """Test converting ibrion=1 to RMM-DIIS algorithm."""

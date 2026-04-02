@@ -1024,6 +1024,7 @@ class VaspMultiStageRelaxWorkChain(WorkChain, WithBuilderUpdater):
         spec.input(
             'ignored_failed',
             valid_type=orm.Bool,
+            required=False,
             default=lambda: orm.Bool(False),
             help='If True, continue to the next stage even when a stage fails, provided a relaxed structure exists.',
         )

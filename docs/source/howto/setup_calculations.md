@@ -240,8 +240,25 @@ For example, to construct a `VaspWorkChain` with the default INCAR tags, k-point
 from aiida_vasp.protocols.generator import VaspInputGenerator
 
 upd = VaspInputGenerator()
-upd.get_builder(structure=si_node, code='<my_code>@<computer>')
+upd.build(structure=si_node, code='<my_code>@<computer>')
 upd.submit()
+```
+
+The `build(...)` method is the canonical constructor. The older `get_builder(...)`
+method is kept as a compatibility alias.
+
+For composite workflows, the generator now exposes typed child views instead of
+requiring all updates to happen through one flat object. For example:
+
+```python
+from aiida_vasp.protocols.generator import VaspBandsInputGenerator
+
+upd = VaspBandsInputGenerator(protocol='balanced')
+upd.build(structure=si_node, code='<my_code>@<computer>', run_relax=True)
+upd.relax().relax().set_relax_settings(force_cutoff=0.02)
+upd.nscf().scf().set_incar(ismear=0)
+upd.nscf().enable_dos(distance=0.03)
+builder = upd.builder
 ```
 
 When not using {{ VaspInputGenerator }}, the `get_builder_from_protocol` method of the workchain can be used to obtain the `ProcessBuilder` directly.
@@ -260,10 +277,19 @@ There are `InputGenerator` class specific to each class:
 |   WorkChain class | InputGenerator class |
 | ------------------- | ---------------------- |
 | {py:class}`aiida_vasp.workchains.v2.relax:VaspRelaxWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspRelaxInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.core_flows:VaspDoubleRelaxWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspDoubleRelaxInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.core_flows:VaspRelaxBandsWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspRelaxBandsInputGenerator` |
 | {py:class}`aiida_vasp.workchains.v2.vasp:VaspWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspInputGenerator` |
-| {py:class}`aiida_vasp.workchains.v2.band:VaspBandsWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspBandsInputGenerator` |
-| {py:class}`aiida_vasp.workchains.v2.band:VaspHybridBandsWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspHybridBandsInputGenerator` |
-| {py:class}`aiida_vasp.workchains.v2.converge:VaspConvergenceWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspConvegenceInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.bands:VaspBandsWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspBandsInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.bands:VaspNscfWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspNscfInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.bands:VaspHybridBandsWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspHybridBandsInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.converge:VaspConvergenceWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspConvergenceInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.mp:VaspMPGGADoubleRelaxWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspMPGGADoubleRelaxInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.mp:VaspMPGGARelaxStaticWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspMPGGARelaxStaticInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.mp:VaspMPMetaGGADoubleRelaxWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspMPMetaGGADoubleRelaxInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.mp:VaspMPMetaGGARelaxStaticWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspMPMetaGGARelaxStaticInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.mp:VaspMP24DoubleRelaxWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspMP24DoubleRelaxInputGenerator` |
+| {py:class}`aiida_vasp.workchains.v2.mp:VaspMP24RelaxStaticWorkChain` | {py:class}`aiida_vasp.protocols.generator:VaspMP24RelaxStaticInputGenerator` |
 
 
 ### Customize protocols and presets
@@ -281,6 +307,10 @@ The `<workchain tag>` is an alias for the workchains.
 | band | {py:class}`aiida_vasp.workchains.v2.relax:VaspBandsWorkChain` |
 | band | {py:class}`aiida_vasp.workchains.v2.relax:VaspHybridBandsWorkChain` |
 | conv | {py:class}`aiida_vasp.workchains.v2.converge:VaspConvergenceWorkChain` |
+
+The newer native composite workflows such as `vasp.v2.double_relax`,
+`vasp.v2.relax_bands`, and the MP workflows reuse the child workflow tags above
+instead of introducing additional standalone protocol YAML tags.
 
 The `<alias>` is an user defined alias for the protocol set.
 

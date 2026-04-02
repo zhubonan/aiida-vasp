@@ -181,7 +181,7 @@ from aiida_vasp.protocols.generator import VaspInputGenerator
 structure = PymatgenTest.get_structure("CsCl")
 
 upd = VaspInputGenerator(protocol="MPRelaxSet")
-upd.get_builder(structure=orm.StructureData(pymatgen=structure), code='mock-vasp@localhost', overrides={"potential_family": "PBE.EXAMPLE"})
+upd.build(structure=orm.StructureData(pymatgen=structure), code='mock-vasp@localhost', overrides={"potential_family": "PBE.EXAMPLE"})
 upd.set_resources(num_machines=1, tot_num_mpiprocs=16)
 upd.set_options(max_wallclock_seconds=3600)
 upd.builder

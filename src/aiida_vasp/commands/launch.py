@@ -169,7 +169,7 @@ def launch_workchain(
         upd_cls = upd_cls_map.get(workchain_type.lower(), VaspInputGenerator)
         upd = upd_cls(preset_name=preset, protocol=protocol)
         # Apply preset with structure
-        upd.get_builder(structure=structure_node, code=code, overrides=overrides)
+        upd.build(structure=structure_node, code=code, overrides=overrides)
         upd.set_label(label)
 
         # Handle resource options

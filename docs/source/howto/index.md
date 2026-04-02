@@ -7,6 +7,7 @@ This section contains a set of how-to guides for various topics related to AiiDA
 ./work_with_other_codes
 ./analyze_results
 ./setup_calculations
+./native_workflows
 ./setup_potentials
 ./customize_protocols
 ```

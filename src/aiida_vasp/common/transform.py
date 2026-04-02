@@ -15,14 +15,16 @@ from ase import Atoms
 from ase.build import niggli_reduce as niggli_reduce_
 from ase.build import sort
 from ase.build.supercells import make_supercell as ase_supercell
+from spglib import niggli_reduce as niggli_reduce_spg
+from spglib import refine_cell
 
 try:
     from ase.mep.neb import NEB
-except ModuleNotFoundError:
-    from ase.neb import NEB
-
-from spglib import niggli_reduce as niggli_reduce_spg
-from spglib import refine_cell
+except ImportError:  # pragma: no cover - compatibility across ASE versions
+    try:
+        from ase.mep import NEB
+    except ImportError:
+        from ase.neb import NEB
 
 
 @calcfunction

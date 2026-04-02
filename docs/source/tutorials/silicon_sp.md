@@ -136,7 +136,7 @@ from aiida_vasp.protocols.generator import VaspInputGenerator
 # You can place your own preset at ~/.aiida-vasp/protocol_presets and use them for production
 # calculations.
 upd = VaspInputGenerator(protocol="balanced")
-upd.get_builder(structure=si_node, code='mock-vasp@localhost', overrides={"potential_family": "PBE.EXAMPLE"})
+upd.build(structure=si_node, code='mock-vasp@localhost', overrides={"potential_family": "PBE.EXAMPLE"})
 ```
 
 The code block above create a `VaspInputGenerator` object and apply the preset for the Si structure.

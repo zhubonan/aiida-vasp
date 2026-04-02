@@ -35,7 +35,7 @@ from aiida_vasp.workchains.v2.bands import BandOptions
 from aiida_vasp.protocols.generator import VaspBandsInputGenerator
 
 upd = VaspBandsInputGenerator()
-builder = upd.get_builder(si_node, code='mock-vasp@localhost',
+builder = upd.build(si_node, code='mock-vasp@localhost',
                           run_relax=False,
                           overrides={
                             'scf':
