@@ -256,9 +256,49 @@ from aiida_vasp.protocols.generator import VaspBandsInputGenerator
 upd = VaspBandsInputGenerator(protocol='balanced')
 upd.build(structure=si_node, code='<my_code>@<computer>', run_relax=True)
 upd.relax().relax().set_relax_settings(force_cutoff=0.02)
+upd.set_band_settings(run_dos=True)
 upd.nscf().scf().set_incar(ismear=0)
 upd.nscf().enable_dos(distance=0.03)
 builder = upd.builder
+```
+
+The generator itself is now self-documenting. Printing it will show the
+canonical ports, accessor methods, and a short access map for the workflow:
+
+```python
+print(upd)
+upd.describe()
+upd.show_schema()
+print(upd.nscf())
+```
+
+This is the recommended discovery workflow for composite generators. Build the
+generator first, inspect it, and then configure the child branches that it
+advertises. For example:
+
+- `VaspBandsInputGenerator` will show `relax()` and `nscf()` as the canonical accessors
+- `VaspHybridBandsInputGenerator` will show `relax()` and `scf()` as the canonical accessors
+- compatibility helpers such as `path()` are intentionally de-emphasized in the printed schema
+
+The namespace views are also self-documenting, so it is useful to inspect the
+branch before mutating it:
+
+```python
+print(upd.relax())
+print(upd.nscf())
+print(upd.nscf().dos())
+```
+
+For hybrid band structures, the access pattern is different and the schema will
+make that explicit:
+
+```python
+from aiida_vasp.protocols.generator import VaspHybridBandsInputGenerator
+
+upd = VaspHybridBandsInputGenerator(protocol='balanced')
+upd.build(structure=si_node, code='<my_code>@<computer>', run_relax=True)
+print(upd)        # shows that hybrid uses scf(), not nscf()
+print(upd.scf())  # inspect the hybrid SCF branch
 ```
 
 When not using {{ VaspInputGenerator }}, the `get_builder_from_protocol` method of the workchain can be used to obtain the `ProcessBuilder` directly.
@@ -294,8 +334,10 @@ There are `InputGenerator` class specific to each class:
 
 ### Customize protocols and presets
 
-In practice, one may want to  have their own default inputs
-This can be achieved by creating a new `<preset_name>.yaml` file inside `~/.aiida-vasp/presets` with the desired settings. The default configuration shown above can be used as a starting point.
+In practice, one may want to have their own default inputs.
+This can be achieved by creating a new `<preset_name>.yaml` file inside
+`~/.aiida-vasp/presets` with the desired settings. The default configuration shown above can be used
+as a starting point. The legacy location `~/.aiida-vasp/protocol_presets` is still supported for compatibility.
 
 It is also possible to have your own **protocol** - simply place the YAML files in the same `~/.aiida-vasp/<workchain tag>/<alias>.yaml` folder.
 
@@ -320,7 +362,6 @@ For example, to have a custom relaxation protocol, create a file at `~/.aiida-va
 # Default input values for the workflow
 default_inputs:
   verbose: False               # Verbosity of the workflow output
-  base_workchain_protocol: balanced
 
 # Protocol definitions
 protocols:
@@ -334,12 +375,12 @@ protocols:
   fixxy:
     description: "Relax only the z axis"
     vasp:
+      protocol: balanced
       parameters:
         ioptcell: 0 0 0 0 0 0 0 0 1
-    base_workchain_protocol: balanced
 ```
 
-The protocol above can be referenced using `VaspRelaxWorkChain.get_builder_from_protocol(...., protocol="posonly@custom"`
+The protocol above can be referenced using `VaspRelaxWorkChain.get_builder_from_protocol(..., protocol="posonly@custom")`.
 
 
 :::{caution}

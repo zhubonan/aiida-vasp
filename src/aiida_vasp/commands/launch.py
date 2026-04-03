@@ -10,7 +10,7 @@ from . import cmd_aiida_vasp
 @cmd_aiida_vasp.command('launch')
 @click.option('--preset', '-p', default='default', help='Preset to use for the calculation.')
 @click.option('--structure', '-s', help='Path to a structure file to use for the calculation or a pk/uuid')
-@click.option('--protocol', '-pt', default='balanced', help='The protocol to use for the calculation.')
+@click.option('--protocol', '-pt', default=None, help='The protocol to use for the calculation.')
 @click.option('--code', '-c', required=True, help='Code to use for the calculation.')
 @click.option(
     '--max-wallclock-seconds', '-m', type=int, default=None, help='Maximum wallclock time for the calculation.'
@@ -171,6 +171,7 @@ def launch_workchain(
         # Apply preset with structure
         upd.build(structure=structure_node, code=code, overrides=overrides)
         upd.set_label(label)
+        resolved_protocol = protocol or upd.protocol
 
         # Handle resource options
         options_dict = setup_calculation_options(
@@ -210,8 +211,8 @@ def launch_workchain(
                 )
                 click.echo(f'INCAR parameters loaded: {len(incar_params)}')
             click.echo(f'Preset: {preset}')
-            if protocol:
-                click.echo(f'Protocol: {protocol}')
+            if resolved_protocol:
+                click.echo(f'Protocol: {resolved_protocol}')
             if label:
                 click.echo(f'Label: {label}')
             if description:

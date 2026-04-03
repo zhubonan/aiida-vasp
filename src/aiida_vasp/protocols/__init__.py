@@ -132,7 +132,7 @@ class ProtocolMixin:
                     'protocols.'
                 ) from exception
         inputs = recursive_merge(data['default_inputs'], protocol_inputs)
-        inputs.pop('description')
+        inputs.pop('description', None)
 
         if isinstance(overrides, pathlib.Path):
             with overrides.open() as file:

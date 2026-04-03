@@ -360,6 +360,42 @@ def test_launch_with_different_presets(cmd_params, run_env, preset):
     assert 'DRY RUN' in result.output
 
 
+def test_launch_uses_preset_default_protocol(cmd_params, run_env, monkeypatch):
+    """If ``--protocol`` is omitted, the preset's default protocol should be used."""
+    preset_dir = Path(cmd_params.TMP_PATH) / 'presets'
+    preset_dir.mkdir()
+    (preset_dir / 'custom.yaml').write_text(
+        '\n'.join(
+            [
+                'name: custom',
+                'default_protocol: fast',
+                'default_code: mock-vasp@localhost',
+            ]
+        )
+    )
+    monkeypatch.setattr('aiida_vasp.protocols.generator.get_preset_library_paths', lambda: (preset_dir,))
+
+    result = run_cmd(
+        command='launch',
+        args=[
+            '--structure',
+            cmd_params.STRUCTURE_FILE,
+            '--code',
+            f'{run_env.code.pk}',
+            '--label',
+            'test-custom-protocol',
+            '--workchain-type',
+            'relax',
+            '--preset',
+            'custom',
+            '--dryrun',
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert 'Protocol: fast' in result.output
+
+
 @pytest.mark.parametrize('protocol', ['balanced', 'MPRelaxSet'])
 def test_launch_with_different_protocols(cmd_params, run_env, protocol):
     """Test launch with different protocols."""

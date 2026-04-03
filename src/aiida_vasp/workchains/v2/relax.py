@@ -68,6 +68,16 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
     def define(cls, spec: ProcessSpec) -> None:
         super().define(spec)
         spec.expose_inputs(cls._base_workchain, 'vasp', exclude=('structure',))
+        spec.expose_inputs(
+            cls._base_workchain,
+            'static',
+            exclude=('structure',),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the final static calculation performed after the relaxation.',
+            },
+        )
         spec.input('structure', valid_type=(orm.StructureData, orm.CifData))
         spec.input(
             'static_calc_parameters',
@@ -75,7 +85,7 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
             required=False,
             serializer=to_aiida_type,
             help="""
-                   The parameters (INCAR) to be used in the final static calculation.
+                   Deprecated compatibility override for the final static calculation parameters.
                    """,
         )
         spec.input(
@@ -84,7 +94,7 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
             required=False,
             serializer=to_aiida_type,
             help="""
-                   The full settings Dict to be used in the final static calculation.
+                   Deprecated compatibility override for the final static calculation settings.
                    """,
         )
         spec.input(
@@ -93,7 +103,7 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
             required=False,
             serializer=to_aiida_type,
             help="""
-                   The full options Dict to be used in the final static calculation.
+                   Deprecated compatibility override for the final static calculation options.
                    """,
         )
         spec.input(
@@ -191,16 +201,29 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
 
         base_builder = cls._base_workchain.get_builder_from_protocol(
             code=code,
-            protocol=inputs.get('vasp', {}).get('protocol', protocol),
+            protocol=inputs.get('vasp', {}).get('protocol'),
             structure=structure,
             overrides=inputs.get('vasp', {}),
             options=options,
             **kwargs,
         )
+        static_builder = deepcopy(base_builder)
+        static_overrides = inputs.get('static', {})
+        if static_overrides:
+            static_builder = cls._base_workchain.get_builder_from_protocol(
+                code=code,
+                protocol=static_overrides.get('protocol', inputs.get('vasp', {}).get('protocol')),
+                structure=structure,
+                overrides=static_overrides,
+                options=options,
+                **kwargs,
+            )
         # Structure is defined at the top level
         base_builder.pop('structure')
+        static_builder.pop('structure')
         builder = cls.get_builder()
         builder.vasp = base_builder
+        builder.static = static_builder
         builder.structure = structure
         builder.relax_settings = inputs.get('relax_settings', {})
         builder.static_calc_settings = inputs.get('static_calc_settings', {})
@@ -386,10 +409,17 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
     def run_static_calculation(self) -> ToContext:
         """Perform the relaxation"""
 
+        inputs = (
+            self.exposed_inputs(self._base_workchain, 'static', agglomerate=True)
+            if 'static' in self.inputs
+            else self.exposed_inputs(self._base_workchain, 'vasp')
+        )
+        inputs = AttributeDict(inputs)
+
         # For the final static run we do not need to parse the output structure
-        if self.inputs.vasp.get('settings'):
+        if inputs.get('settings'):
             self.ctx.static_input_additions.settings = update_nested_dict_node(
-                self.inputs.vasp.settings,
+                inputs.settings,
                 {
                     'parser_settings': {
                         'include_node': ['structure', 'trajectory'],
@@ -418,7 +448,6 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
 
         self.ctx.iteration += 1
 
-        inputs = self.exposed_inputs(self._base_workchain, 'vasp')
         inputs.structure = self.ctx.current_structure
 
         # Attach previous calculation's folder if requested

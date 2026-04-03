@@ -129,7 +129,7 @@ class VaspConvergenceWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         vasp_builder = VaspWorkChain.get_builder_from_protocol(
             code=code,
             structure=structure,
-            protocol=inputs.get('vasp', {}).get('protocol', protocol),
+            protocol=inputs.get('vasp', {}).get('protocol'),
             overrides=overrides,
             **kwargs,
         )

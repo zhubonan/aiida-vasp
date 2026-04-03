@@ -41,6 +41,12 @@ SITE_MAG_THRESHOLD = 0  # Threshold for considering a site to be magnetic
 logger = getLogger(__name__)
 
 
+def _set_builder_namespace(namespace, values: dict) -> None:
+    """Populate a builder namespace with explicitly provided values only."""
+    for key, value in values.items():
+        setattr(namespace, key, value)
+
+
 class VaspNscfWorkChain(WorkChain, ProtocolMixin):
     """
     Reusable semilocal SCF/NSCF execution workchain.
@@ -78,15 +84,16 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
             valid_type=orm.Dict,
             validator=BandOptions.aiida_validate,
             serializer=BandOptions.aiida_serialize,
+            required=True,
         )
         spec.expose_inputs(
             base_work,
             namespace='scf',
             exclude=('structure',),
             namespace_options={
-                'required': True,
+                'required': False,
                 'populate_defaults': True,
-                'help': 'Inputs for SCF workchain, mandatory',
+                'help': 'Legacy top-level inputs for the SCF workchain.',
             },
         )
         spec.expose_inputs(
@@ -116,6 +123,23 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
             help='What part of the called children to clean',
             required=False,
             default=lambda: orm.Str('none'),
+        )
+        spec.input_namespace(
+            'reuse',
+            required=False,
+            help='Inputs controlling reuse of data from previous calculations.',
+        )
+        spec.input(
+            'reuse.chgcar',
+            required=False,
+            valid_type=ChargedensityData,
+            help='Explicit CHGCAR file used for DOS/Bands calculations',
+        )
+        spec.input(
+            'reuse.restart_folder',
+            required=False,
+            valid_type=orm.RemoteData,
+            help='A remote folder containing the CHGCAR file to be used',
         )
         spec.input(
             'chgcar',
@@ -172,7 +196,7 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         scf_builder = cls._base_workchain.get_builder_from_protocol(
             code=code,
             structure=structure,
-            protocol=inputs.get('scf', {}).get('protocol', protocol),
+            protocol=inputs.get('scf', {}).get('protocol'),
             overrides=inputs.get('scf', {}),
             options=options,
             **kwargs,
@@ -190,19 +214,29 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
             builder.band_settings = inputs.get('band_settings')
         if inputs.get('clean_children_workdir'):
             builder.clean_children_workdir = inputs.get('clean_children_workdir')
+        if inputs.get('reuse'):
+            builder.reuse = inputs.get('reuse')
         return builder
 
     def select_chgcar_from_inputs(self) -> None:
         """Setup CHGCAR from inputs."""
-        if self.inputs.get('chgcar'):
-            self.ctx.chgcar = self.inputs.chgcar
-            self.report(f'Using CHGCAR {self.inputs.chgcar} from input')
+        reuse = self.inputs.get('reuse', {})
+        chgcar = reuse.get('chgcar') if reuse else None
+        restart_folder = reuse.get('restart_folder') if reuse else None
+        if chgcar is None:
+            chgcar = self.inputs.get('chgcar')
+        if restart_folder is None:
+            restart_folder = self.inputs.get('restart_folder')
+
+        if chgcar:
+            self.ctx.chgcar = chgcar
+            self.report(f'Using CHGCAR {chgcar} from input')
         else:
             self.ctx.chgcar = None
 
-        if self.inputs.get('restart_folder'):
-            self.ctx.restart_folder = self.inputs.restart_folder
-            self.report(f'Using remote folder {self.inputs.restart_folder} for restart')
+        if restart_folder:
+            self.ctx.restart_folder = restart_folder
+            self.report(f'Using remote folder {restart_folder} for restart')
         else:
             self.ctx.restart_folder = None
 
@@ -445,8 +479,28 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         super().define(spec)
         relax_work = WorkflowFactory(cls._relax_wk_string)
         base_work = WorkflowFactory(cls._base_wk_string)
+        nscf_work = WorkflowFactory('vasp.v2.nscf')
 
         spec.input('structure', help='The input structure', valid_type=orm.StructureData)
+        spec.input_namespace(
+            'path',
+            required=False,
+            help='Path-generation controls for the band-structure workflow.',
+        )
+        spec.input(
+            'path.bs_kpoints',
+            help='Explicit kpoints for the bands. Will not generate kpoints if supplied.',
+            valid_type=orm.KpointsData,
+            required=False,
+        )
+        spec.input(
+            'path.band_settings',
+            help=BandOptions.aiida_description(),
+            valid_type=orm.Dict,
+            validator=BandOptions.aiida_validate,
+            serializer=BandOptions.aiida_serialize,
+            required=False,
+        )
         spec.input(
             'bs_kpoints',
             help='Explicit kpoints for the bands. Will not generate kpoints if supplied.',
@@ -468,6 +522,16 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
                 'required': False,
                 'populate_defaults': False,
                 'help': 'Inputs for Relaxation workchain, if needed',
+            },
+        )
+        spec.expose_inputs(
+            nscf_work,
+            namespace='nscf',
+            exclude=('structure', 'bs_kpoints', 'band_settings'),
+            namespace_options={
+                'required': False,
+                'populate_defaults': False,
+                'help': 'Inputs for the reusable NSCF execution workchain.',
             },
         )
         spec.expose_inputs(
@@ -576,22 +640,38 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         inputs = cls.get_protocol_inputs(protocol, overrides)
         if band_settings:
             inputs['band_settings'] = recursive_merge(inputs.get('band_settings'), band_settings)
+        path_inputs = deepcopy(inputs.get('path', {}))
+        top_level_band_settings = deepcopy(inputs.get('band_settings'))
+        if path_inputs.get('band_settings'):
+            top_level_band_settings = recursive_merge(top_level_band_settings or {}, path_inputs['band_settings'])
+        nscf_overrides = deepcopy(inputs.get('nscf', {}))
+        if inputs.get('scf'):
+            nscf_overrides['scf'] = inputs.get('scf', {})
+        if inputs.get('bands'):
+            nscf_overrides['bands'] = inputs.get('bands', {})
+        if inputs.get('dos'):
+            nscf_overrides['dos'] = inputs.get('dos', {})
+        if inputs.get('reuse'):
+            nscf_overrides['reuse'] = inputs.get('reuse', {})
 
-        scf_builder = cls._base_workchain.get_builder_from_protocol(
+        nscf_builder = cls._nscf_workchain.get_builder_from_protocol(
             code=code,
             structure=structure,
-            protocol=inputs.get('scf', {}).get('protocol', protocol),
-            overrides=inputs.get('scf', {}),
+            protocol=protocol,
+            overrides=nscf_overrides,
             options=options,
+            band_settings=top_level_band_settings,
             **kwargs,
         )
+        # Keep the old top-level namespaces populated for backwards compatibility.
+        scf_builder = deepcopy(nscf_builder.scf)
 
         # Configure the relaxation step of the workchain
         if run_relax:
             relax_builder = cls._relax_workchain.get_builder_from_protocol(
                 code=code,
                 structure=structure,
-                protocol=inputs.get('relax', {}).get('protocol', protocol),
+                protocol=inputs.get('relax', {}).get('protocol'),
                 overrides=inputs.get('relax', {}),
                 options=options,
                 **kwargs,
@@ -600,30 +680,68 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         else:
             relax_builder = None
 
-        scf_builder.pop('structure')
+        nscf_builder.pop('structure')
 
         builder = cls.get_builder()
-        builder.scf = scf_builder
         builder.structure = structure
+        _set_builder_namespace(builder.nscf, nscf_builder._inputs(prune=True))
+        _set_builder_namespace(builder.scf, scf_builder._inputs(prune=True))
         if relax_builder is not None:
-            builder.relax = relax_builder
-        if inputs.get('bands'):
-            builder.bands = inputs.get('bands')
-        if inputs.get('dos'):
-            builder.dos = inputs.get('dos')
-        if inputs.get('band_settings'):
-            builder.band_settings = inputs.get('band_settings')
+            _set_builder_namespace(builder.relax, relax_builder._inputs(prune=True))
+        if 'bands' in nscf_builder:
+            _set_builder_namespace(builder.bands, nscf_builder.bands._inputs(prune=True))
+        if 'dos' in nscf_builder:
+            _set_builder_namespace(builder.dos, nscf_builder.dos._inputs(prune=True))
+        if top_level_band_settings:
+            builder.band_settings = top_level_band_settings
+        if path_inputs.get('band_settings'):
+            builder.path.band_settings = path_inputs.get('band_settings')
         if inputs.get('clean_children_workdir'):
             builder.clean_children_workdir = inputs.get('clean_children_workdir')
+        if 'clean_children_workdir' in nscf_builder:
+            builder.nscf.clean_children_workdir = nscf_builder.clean_children_workdir
+        if inputs.get('bs_kpoints'):
+            builder.bs_kpoints = inputs['bs_kpoints']
+        if inputs.get('path', {}).get('bs_kpoints'):
+            builder.path.bs_kpoints = inputs['path']['bs_kpoints']
+            if 'bs_kpoints' not in builder:
+                builder.bs_kpoints = inputs['path']['bs_kpoints']
+        if 'reuse' in nscf_builder:
+            _set_builder_namespace(builder.nscf.reuse, nscf_builder.reuse._inputs(prune=True))
 
         return builder
+
+    def _band_settings(self):
+        """Return band settings from the normalized path namespace or the legacy top-level port."""
+        if 'band_settings' in self.inputs and self.inputs.band_settings is not None:
+            return self.inputs.band_settings
+        path = self.inputs.get('path')
+        if path and path.get('band_settings') is not None:
+            return path.band_settings
+        return None
+
+    def _scf_inputs(self):
+        """Return SCF inputs from the normalized NSCF namespace or the legacy top-level port."""
+        if 'nscf' in self.inputs and self.inputs.nscf.get('scf') is not None:
+            return self.inputs.nscf.scf
+        return self.inputs.scf
+
+    def _explicit_bs_kpoints(self):
+        """Return explicit band-path kpoints from the normalized path namespace or legacy port."""
+        if 'bs_kpoints' in self.inputs and self.inputs.bs_kpoints is not None:
+            return self.inputs.bs_kpoints
+        path = self.inputs.get('path')
+        if path and path.get('bs_kpoints') is not None:
+            return path.bs_kpoints
+        return None
 
     def setup(self) -> None:
         """Setup the calculation"""
         self.ctx.current_structure = self.inputs.structure
-        self.ctx.bs_kpoints = self.inputs.get('bs_kpoints')
-        param = self.inputs.scf.parameters.get_dict()
-        if 'magmom' in param[OVERRIDE_NAMESPACE] and not self.inputs.band_settings['only_dos']:
+        self.ctx.bs_kpoints = self._explicit_bs_kpoints()
+        self.ctx.band_settings = self._band_settings()
+        param = self._scf_inputs().parameters.get_dict()
+        if 'magmom' in param[OVERRIDE_NAMESPACE] and not self.ctx.band_settings['only_dos']:
             self.report('Magnetic system passed for BS')
             self.ctx.magmom = param[OVERRIDE_NAMESPACE]['magmom']
         else:
@@ -643,7 +761,7 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         inputs.structure = self.ctx.current_structure
 
         # Ensure the WAVECAR is written by the calculation
-        if self.inputs.band_settings.get('hybrid_reuse_wavecar', False):
+        if self.ctx.band_settings.get('hybrid_reuse_wavecar', False):
             pdict = inputs.vasp.parameters.get_dict()
             # Update the relax settings so we do not clean the final singepoint calculation
             rdict = inputs.relax_settings.get_dict()
@@ -673,7 +791,7 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         Seekpath should only run if no explicit bands is provided or we are just
         running for DOS, in which case the original structure is used.
         """
-        return 'bs_kpoints' not in self.inputs and (not self.inputs.band_settings['only_dos'])
+        return self._explicit_bs_kpoints() is None and (not self.ctx.band_settings['only_dos'])
 
     def generate_path(self) -> None:
         """
@@ -682,15 +800,15 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
 
         current_structure_backup = self.ctx.current_structure
 
-        mode = self.inputs.band_settings['band_mode']
+        mode = self.ctx.band_settings['band_mode']
 
         if mode == 'seekpath-aiida':
             inputs = {
                 'band_settings': orm.Dict(
                     {
-                        'reference_distance': self.inputs.band_settings['band_kpoints_distance'],
-                        'symprec': self.inputs.band_settings['symprec'],
-                        **self.inputs.band_settings['additional_band_analysis_parameters'],
+                        'reference_distance': self.ctx.band_settings['band_kpoints_distance'],
+                        'symprec': self.ctx.band_settings['symprec'],
+                        **self.ctx.band_settings['additional_band_analysis_parameters'],
                     }
                 ),
                 'metadata': {'call_link_label': 'seekpath'},
@@ -706,10 +824,10 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
             inputs = {
                 'band_settings': orm.Dict(
                     {
-                        'line_density': self.inputs.band_settings['line_density'],
-                        'symprec': self.inputs.band_settings['symprec'],
+                        'line_density': self.ctx.band_settings['line_density'],
+                        'symprec': self.ctx.band_settings['symprec'],
                         'mode': mode,
-                        **self.inputs.band_settings['additional_band_analysis_parameters'],
+                        **self.ctx.band_settings['additional_band_analysis_parameters'],
                     }
                 ),
                 'metadata': {'call_link_label': 'sumo_kpath'},
@@ -735,7 +853,7 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
             self.ctx.current_structure = kpath_results['primitive_structure']
 
         if not np.allclose(self.ctx.current_structure.cell, current_structure_backup.cell):
-            if self.inputs.scf.get('kpoints'):
+            if self._scf_inputs().get('kpoints'):
                 self.report(
                     'The primitive structure is not the same as the input structure but explicit kpoints are supplied'
                     ' - aborting the workchain.'
@@ -752,30 +870,35 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
 
     def run_nscf(self) -> Any:
         """Run the reusable NSCF workchain."""
-        inputs = AttributeDict()
+        if 'nscf' in self.inputs:
+            inputs = AttributeDict(self.exposed_inputs(self._nscf_workchain, namespace='nscf', agglomerate=True))
+        else:
+            inputs = AttributeDict()
+            inputs.scf = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='scf'))
+            if 'bands' in self.inputs:
+                inputs.bands = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='bands'))
+            if 'dos' in self.inputs:
+                inputs.dos = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='dos'))
         inputs.metadata = {'call_link_label': 'nscf', 'label': self.get_appended_label('NSCF')}
         inputs.structure = self.ctx.current_structure
-        inputs.band_settings = self.inputs.band_settings
-        inputs.scf = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='scf'))
+        inputs.band_settings = self.ctx.band_settings
 
         magmom = self.ctx.get('magmom')
         if magmom:
-            inputs.scf.parameters = update_nested_dict_node(inputs.scf.parameters, {OVERRIDE_NAMESPACE: {'magmom': magmom}})
+            inputs.scf.parameters = update_nested_dict_node(
+                inputs.scf.parameters, {OVERRIDE_NAMESPACE: {'magmom': magmom}}
+            )
 
         if self.ctx.get('bs_kpoints') is not None:
             inputs.bs_kpoints = self.ctx.bs_kpoints
 
-        if 'bands' in self.inputs:
-            inputs.bands = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='bands'))
-
-        if 'dos' in self.inputs:
-            inputs.dos = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='dos'))
-
+        reuse = inputs.get('reuse') or AttributeDict()
         if 'chgcar' in self.inputs:
-            inputs.chgcar = self.inputs.chgcar
-
+            reuse.chgcar = self.inputs.chgcar
         if 'restart_folder' in self.inputs:
-            inputs.restart_folder = self.inputs.restart_folder
+            reuse.restart_folder = self.inputs.restart_folder
+        if reuse:
+            inputs.reuse = reuse
 
         if 'clean_children_workdir' in self.inputs:
             inputs.clean_children_workdir = self.inputs.clean_children_workdir
@@ -1063,7 +1186,7 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
         kpt = get_ir_kpoints_data(
             self.ctx.current_structure,
             self.inputs.scf.kpoints_spacing * np.pi * 2,  # Note that aiida-vasp assumes a 2pi factor in the unit
-            symprec=self.inputs.band_settings.get('symprec', 1e-5),
+            symprec=self.ctx.band_settings.get('symprec', 1e-5),
             symmetry_reduce=symmetry_reduce,
         )
         self.ctx.scf_kpoints = kpt
@@ -1080,7 +1203,7 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
 
         # Number of kpoints per split, NOT including the SCF kpoints
         nscf = scf_kpoints.get_kpoints().shape[0]
-        per_split = orm.Int(self.inputs.band_settings['kpoints_per_split'] - nscf)
+        per_split = orm.Int(self.ctx.band_settings['kpoints_per_split'] - nscf)
         if (per_split / nscf) <= 0.5:
             per_split = int(nscf * 0.5)
             self.report(f'WARNING: Too few actual band k points per split, setting it to: {per_split + nscf}')
@@ -1119,7 +1242,7 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
         pdict = inputs.parameters.get_dict()
 
         # Reuse the wavecar if requested
-        if self.inputs.band_settings.get('hybrid_reuse_wavecar', False):
+        if self.ctx.band_settings.get('hybrid_reuse_wavecar', False):
             self.report('Setting ISTART=1 to reuse WAVECAR from the previous calculation.')
             pdict['incar']['istart'] = 1
             inputs.parameters = orm.Dict(pdict)
@@ -1172,7 +1295,7 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
                 inputs.parameters = orm.Dict(pdict)
 
         # Reuse the wavecar if requested
-        if self.inputs.band_settings.get('hybrid_reuse_wavecar', False):
+        if self.ctx.band_settings.get('hybrid_reuse_wavecar', False):
             self.report('Setting ISTART=1 to reuse WAVECAR from the previous calculation.')
             pdict['incar']['istart'] = 1
             inputs.parameters = orm.Dict(pdict)
@@ -1186,7 +1309,7 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
             # Use the updated parameters
             inputs.parameters = pnode
 
-            if self.inputs.band_settings.get('hybrid_reuse_wavecar', False):
+            if self.ctx.band_settings.get('hybrid_reuse_wavecar', False):
                 inputs.restart_folder = relax_work.outputs.remote_folder
 
             # Ensure that the bands are parsed
@@ -1216,6 +1339,7 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
         return_codes = [work.exit_status for work in workchains]
         if any(return_codes):
             self.report('At least one calculation did not have zero return code!')
+            return self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
 
         # Extract the bands information
         self.report(f'Extracting output bandstructure from {len(self.ctx.workchains)} workchains.')

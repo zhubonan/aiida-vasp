@@ -133,8 +133,8 @@ from aiida_vasp.protocols.generator import VaspInputGenerator
 
 # This instantiate a VaspInputGenerator object and apply the preset
 # The default name is `default` stored in the code repository.
-# You can place your own preset at ~/.aiida-vasp/protocol_presets and use them for production
-# calculations.
+# You can place your own preset at ~/.aiida-vasp/presets and use them for production
+# calculations. The legacy ~/.aiida-vasp/protocol_presets location is also supported.
 upd = VaspInputGenerator(protocol="balanced")
 upd.build(structure=si_node, code='mock-vasp@localhost', overrides={"potential_family": "PBE.EXAMPLE"})
 ```

@@ -56,9 +56,7 @@ VaspRelaxWorkChain
 |
 |- structure (StructureData of the input structure)
 |- vasp (exposed VaspWorkChain inputs)
-|- static_calc_settings (settings to override for the static calculation)
-|- static_calc_options (options to override for the static calculation)
-|- static_calc_parameters (parameters to override for the static calculation)
+|- static (optional exposed VaspWorkChain inputs for the final static calculation)
 |- relax_settings (settings controlling the relaxation)
 |- verbose
 ```
@@ -96,6 +94,9 @@ print(opt.aiida_description())
 
 By default, every input to the workchain has to be specified in full before submission, this can be quiet tedious for daily calculation.
 To simplify the input, we have implemented the {{ VaspInputGenerator }} class that can automatically update the builder with default values.
+The generator objects are themselves self-documenting: after calling `build(...)`,
+printing the generator or one of its child views will show the canonical ports
+and accessor methods for that workflow.
 See [this page](#workflow_inputs) for more information.
 
 The user may write default values and store them in an YAML file to ensure consistent settings are used across multiple projects.
@@ -217,15 +218,25 @@ In addition, an exposed `relax` namespace for running {{ VaspRelaxWorkChain }} e
 geometry optimization before the band structure calculation if it is specified.
 
 The parameters for the scf (for generating the charge density) the actual band structure structure calculation should be specified under the exposed {{ VaspWorkChain }} namespace called  `scf` and `bands`.
-An additional `dos` namespace is also exposed for calculating the density of states and can be specified if desired.
+The semilocal {{ VaspBandsWorkchain }} now separates path-generation from NSCF execution internally.
+For the public input interface, the primary controls are:
+
+- `relax`: optional relaxation inputs
+- `nscf`: reusable SCF/NSCF execution namespace
+- `band_settings`: top-level path-generation settings
+- `bs_kpoints`: optional explicit path kpoints
+
+The optional `path` namespace is kept as a compatibility alias, but new code should prefer
+top-level `band_settings` and `bs_kpoints`.
 
 
 :::{note}
-The `scf` namespace should always be specified, while specifying `bands` namespace is only needed if the
-input nodes should be different from that in the `scf` namespace. The same rule applies to the `dos` namespace.
+Within the `nscf` namespace, `scf` should always be specified, while `bands` and `dos`
+are optional overrides for the follow-up executions.
 :::
 
-Similar to the {{ VaspRelaxWorkChain }} the behavor of the {{ VaspBandsWorkchain }} can be controlled using the `band_settings` input:
+Similar to the {{ VaspRelaxWorkChain }}, the behavior of the {{ VaspBandsWorkchain }}
+is controlled through the top-level `band_settings` input:
 
 ```{code-cell}
 from aiida.plugins import WorkflowFactory

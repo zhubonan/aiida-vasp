@@ -381,6 +381,7 @@ A nested dictionary containing the following keys:
             the ``CalcJobs`` that are nested in this work chain.
         :return: a process builder instance with all inputs defined ready for launch.
         """
+        overrides = overrides or {}
 
         if isinstance(code, str):
             code = orm.load_code(code)

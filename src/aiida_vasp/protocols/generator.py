@@ -7,12 +7,12 @@ by `.get_builder_from_protocol` method of various workchain classes.
 
 from __future__ import annotations
 
+import warnings
 from copy import deepcopy
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
 from typing import Any
-import warnings
 
 from aiida import orm
 from aiida.engine import run_get_node, submit
@@ -28,20 +28,55 @@ __all__ = [
     'VaspDoubleRelaxInputGenerator',
     'VaspHybridBandsInputGenerator',
     'VaspInputGenerator',
-    'VaspNscfInputGenerator',
     'VaspMP24DoubleRelaxInputGenerator',
     'VaspMP24RelaxStaticInputGenerator',
     'VaspMPGGADoubleRelaxInputGenerator',
     'VaspMPGGARelaxStaticInputGenerator',
     'VaspMPMetaGGADoubleRelaxInputGenerator',
     'VaspMPMetaGGARelaxStaticInputGenerator',
-    'VaspRelaxInputGenerator',
+    'VaspNscfInputGenerator',
     'VaspRelaxBandsInputGenerator',
+    'VaspRelaxInputGenerator',
 ]
 
 
-DEFAULT_PRESET = 'default_preset'
+DEFAULT_PRESET = 'default'
 DEFAULT_PROTOCOL = 'balanced'
+CANONICAL_PRESET_DIR = 'presets'
+LEGACY_PRESET_DIR = 'protocol_presets'
+DEPRECATED_PRESET_FIELDS = ('protocol_overrides', 'default_relax_settings', 'default_band_settings')
+
+
+def _format_schema_block(schema: dict[str, Any]) -> str:
+    """Render a compact human-readable schema description."""
+    lines = [schema['title']]
+    summary = schema.get('summary')
+    if summary:
+        lines.append(summary)
+
+    details = schema.get('details', {})
+    if details:
+        rendered = ', '.join(f'{key}={value}' for key, value in details.items())
+        lines.append(f'Details: {rendered}')
+
+    for key, label in (
+        ('canonical_ports', 'Canonical ports'),
+        ('accessors', 'Accessors'),
+        ('mutators', 'Mutators'),
+        ('notes', 'Notes'),
+        ('examples', 'Examples'),
+    ):
+        values = schema.get(key) or []
+        if values:
+            lines.append(f'{label}:')
+            lines.extend(f'  - {value}' for value in values)
+
+    current = schema.get('current')
+    if current:
+        lines.append('Current:')
+        lines.extend(f'  - {value}' for value in current)
+
+    return '\n'.join(lines)
 
 
 def join_namespace_path(*parts: str | None) -> str:
@@ -59,16 +94,56 @@ def get_library_path() -> Path:
     return Path(__file__).parent / 'presets'
 
 
+def get_preset_library_paths() -> tuple[Path, ...]:
+    """Return package and user paths searched for preset files."""
+    return (
+        get_library_path(),
+        Path(f'~/.aiida-vasp/{CANONICAL_PRESET_DIR}').expanduser(),
+        Path(f'~/.aiida-vasp/{LEGACY_PRESET_DIR}').expanduser(),
+    )
+
+
+def _warn_for_deprecated_preset_fields(data: dict[str, Any], source: str) -> None:
+    """Warn when preset files still define generator fields that are no longer consumed."""
+    deprecated_fields = [field for field in DEPRECATED_PRESET_FIELDS if data.get(field)]
+    if deprecated_fields:
+        warnings.warn(
+            (
+                f'Preset `{source}` defines deprecated fields {deprecated_fields}. '
+                'These fields are ignored by the input-generator path and will be removed in a future release.'
+            ),
+            FutureWarning,
+            stacklevel=2,
+        )
+
+
+def _iter_preset_candidate_paths(fname: str) -> list[Path]:
+    """Return candidate preset paths for a named preset or explicit file path."""
+    target = Path(fname).expanduser()
+    if target.suffix in {'.yaml', '.yml'}:
+        return [target]
+
+    candidates: list[Path] = []
+    for parent in get_preset_library_paths():
+        candidates.append(parent / f'{fname}.yaml')
+        candidates.append(parent / f'{fname}.yml')
+    return candidates
+
+
 def list_protocol_presets() -> list[Path]:
     """
     List all available presets in the package.
     """
-    _load_paths = (get_library_path(), Path('~/.aiida-vasp/protocol_presets').expanduser())
     presets = []
-    for parent in _load_paths:
+    seen = set()
+    for parent in get_preset_library_paths():
         files = chain(parent.glob('*.yaml'), parent.glob('*.yml'))
         for file in files:
-            presets.append(file.absolute())
+            resolved = file.absolute()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            presets.append(resolved)
     return presets
 
 
@@ -92,7 +167,7 @@ class PresetConfig:
         Load preset configuration from a YAML file.
 
         Searches for the configuration file in the package library path and user's
-        home directory (~/.aiida-vasp/protocol_presets/).
+        home directory (`~/.aiida-vasp/presets/` or the legacy `~/.aiida-vasp/protocol_presets/`).
 
         :param fname: Name of the configuration file (without .yaml extension)
         :type fname: str
@@ -102,16 +177,13 @@ class PresetConfig:
 
         :raises RuntimeError: If the preset definition file cannot be found
         """
-        _load_paths = (get_library_path(), Path('~/.aiida-vasp/protocol_presets').expanduser())
-        for parent in _load_paths:
-            target_path = parent / (fname + '.yaml')
-            if target_path.is_file():
-                break
+        target_path = next((path for path in _iter_preset_candidate_paths(fname) if path.is_file()), None)
         if target_path is None:
             raise RuntimeError(f'Cannot find preset definition for {fname}')
 
         with open(target_path, encoding='utf-8', mode='r') as fhandle:
-            data = safe_load(fhandle)
+            data = safe_load(fhandle) or {}
+        _warn_for_deprecated_preset_fields(data, str(target_path))
         return cls(**data)
 
     def get_code_specific_options(self, code: str, namespace: str) -> dict[str, Any]:
@@ -146,6 +218,14 @@ class PresetConfig:
             )
         )
 
+    def resolve_code_specific_configuration(self, code: str) -> dict[str, dict[str, Any]]:
+        """Resolve all preset-derived configuration fragments for a given code."""
+        return {
+            'options': self.get_code_specific_options(code, 'options'),
+            'settings': self.get_code_specific_options(code, 'settings'),
+            'incar': self.get_code_specific_options(code, 'incar'),
+        }
+
 
 class BaseInputGenerator:
     """
@@ -157,6 +237,13 @@ class BaseInputGenerator:
     """
 
     WF_ENTRYPOINT = 'vasp.vasp'
+    WORKFLOW_LABEL = 'VASP workflow'
+    WORKFLOW_SUMMARY = 'Protocol-based builder generator.'
+    CANONICAL_PORTS: tuple[str, ...] = ()
+    ACCESSOR_DOCS: tuple[str, ...] = ()
+    MUTATOR_DOCS: tuple[str, ...] = ()
+    NOTES: tuple[str, ...] = ()
+    EXAMPLES: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -175,30 +262,56 @@ class BaseInputGenerator:
         self.protocol = protocol if protocol is not None else self.preset.default_protocol
         self.builder = None
 
+    @staticmethod
+    def _load_code_node(code):
+        """Return a loaded code node from a string/PK or pass through a code instance."""
+        if isinstance(code, orm.AbstractCode):
+            return code
+        return orm.load_code(code)
+
+    def _resolve_build_request(self, *, code=None, protocol=None, overrides=None, options=None) -> dict[str, Any]:
+        """Resolve preset-backed defaults before constructing a workflow builder."""
+        resolved_code = code or self.preset.default_code
+        resolved_protocol = self.protocol if protocol is None else protocol
+        resolved_overrides = deepcopy(overrides or {})
+        profile_code = resolved_code.full_label if isinstance(resolved_code, orm.AbstractCode) else resolved_code
+        profile_config = self.preset.resolve_code_specific_configuration(profile_code)
+        resolved_options = recursive_merge(profile_config['options'], options or {})
+        return {
+            'code': resolved_code,
+            'protocol': resolved_protocol,
+            'overrides': resolved_overrides,
+            'options': resolved_options,
+            'profile_config': profile_config,
+        }
+
+    def _finalize_builder(self, builder, *, profile_config: dict[str, dict[str, Any]]):
+        """Store the builder and apply preset/profile defaults consistently."""
+        self.builder = builder
+        self.set_settings(profile_config['settings'])
+        self.set_incar(profile_config['incar'])
+        return builder
+
     def build(self, structure, code=None, protocol=None, overrides=None, **kwargs):
         """
         Generate builder base on a given structure and overrides (if supplied)
         """
-        protocol = protocol or self.protocol
-        overrides = overrides or {}
-        code = code or self.preset.default_code
-        options = kwargs.pop('options', {})
-        options = recursive_merge(self.preset.get_code_specific_options(code, 'options'), options)
-
-        builder = WorkflowFactory(self.WF_ENTRYPOINT).get_builder_from_protocol(
-            code=orm.load_code(code),
-            structure=structure,
+        build_request = self._resolve_build_request(
+            code=code,
             protocol=protocol,
             overrides=overrides,
-            options=options,
+            options=kwargs.pop('options', {}),
+        )
+
+        builder = WorkflowFactory(self.WF_ENTRYPOINT).get_builder_from_protocol(
+            code=self._load_code_node(build_request['code']),
+            structure=structure,
+            protocol=build_request['protocol'],
+            overrides=build_request['overrides'],
+            options=build_request['options'],
             **kwargs,
         )
-        self.builder = builder
-        # Apply other settings
-        self.set_settings(self.preset.get_code_specific_options(code, 'settings'))
-        # Apply other settings
-        self.set_incar(self.preset.get_code_specific_options(code, 'incar'))
-        return builder
+        return self._finalize_builder(builder, profile_config=build_request['profile_config'])
 
     def get_builder(self, structure, code=None, protocol=None, overrides=None, **kwargs):
         """Compatibility alias for :meth:`build`."""
@@ -245,10 +358,49 @@ class BaseInputGenerator:
         parent, leaf = self._resolve_parent_and_leaf(port_path)
         return parent.get(leaf)
 
+    def _path_exists(self, port_path: str) -> bool:
+        """Return whether ``port_path`` resolves on the current builder."""
+        try:
+            self._resolve_parent_and_leaf(port_path)
+        except (AttributeError, KeyError, ValueError):
+            return False
+        return True
+
     def _set_path_value(self, port_path: str, value) -> None:
         """Set the value stored at ``port_path``."""
         parent, leaf = self._resolve_parent_and_leaf(port_path)
         setattr(parent, leaf, value)
+
+    def _get_compatible_port_paths(self, port_path: str) -> list[str]:
+        """Return compatibility-linked paths for builder ports that have legacy aliases."""
+        paths = [port_path]
+        if self.builder is None:
+            return paths
+
+        parent_path, leaf = port_path.rsplit('.', 1) if '.' in port_path else ('', port_path)
+        if leaf not in {'band_settings', 'bs_kpoints'}:
+            return paths
+
+        if parent_path.endswith('path'):
+            alias_parent = parent_path.rsplit('.', 1)[0] if '.' in parent_path else ''
+        else:
+            alias_parent = join_namespace_path(parent_path, 'path')
+        alias_path = join_namespace_path(alias_parent, leaf)
+        if alias_path != port_path and self._path_exists(alias_path):
+            paths.append(alias_path)
+        return paths
+
+    def _update_compatible_dict_paths(self, port_path: str, content: dict[str, Any]):
+        """Update a Dict-backed port and any compatibility aliases that point to the same setting."""
+        for path in dict.fromkeys(self._get_compatible_port_paths(port_path)):
+            self._update_dict_path(path, content)
+        return self
+
+    def _set_compatible_path_value(self, port_path: str, value):
+        """Set a value on a port and any compatibility aliases that mirror it."""
+        for path in dict.fromkeys(self._get_compatible_port_paths(port_path)):
+            self._set_path_value(path, value)
+        return self
 
     def _update_dict_path(self, port_path: str, content: dict[str, Any], namespace: str | None = None):
         """Update an ``orm.Dict`` port, creating it when absent."""
@@ -386,19 +538,11 @@ class BaseInputGenerator:
         setattr(item, parts[-1], node)
 
     def __repr__(self):
-        string = f'{self.__class__.__name__}(protocol={self.protocol}, preset_name={self.preset_name})'
-        if self.builder is not None:
-            string += f'\nBuilder: {self.builder}'
-        return string
+        return self.describe()
 
     def _repr_pretty_(self, p, _=None) -> str:
         """Pretty representation for in the IPython console and notebooks."""
-
-        string = f'{self.__class__.__name__}(protocol={self.protocol}, preset_name={self.preset_name})'
-        p.text(string)
-        if self.builder is not None:
-            p.text('\nWith Builder:\n')
-            self.builder._repr_pretty_(p, _)
+        p.text(self.describe())
 
     def set_kspacing(self, value, ports=None, update_all=True):
         """Update the kpoints spacing"""
@@ -525,9 +669,52 @@ class BaseInputGenerator:
         """
         self._get_help(namespace, print_to_stdout=print_to_stdout, inout='inputs')
 
+    def schema(self) -> dict[str, Any]:
+        """Return a structured description of the generator interface."""
+        current = ['builder constructed' if self.builder is not None else 'builder not constructed']
+        if self.builder is not None:
+            current.append(f'workflow entry point: {self.WF_ENTRYPOINT}')
+
+        return {
+            'title': f'{self.__class__.__name__}: {self.WORKFLOW_LABEL}',
+            'summary': self.WORKFLOW_SUMMARY,
+            'details': {'protocol': self.protocol, 'preset': self.preset_name},
+            'canonical_ports': list(self.CANONICAL_PORTS),
+            'accessors': list(self.ACCESSOR_DOCS),
+            'mutators': list(self.MUTATOR_DOCS),
+            'notes': list(self.NOTES),
+            'examples': list(self.EXAMPLES),
+            'current': current,
+        }
+
+    def describe(self, print_to_stdout: bool = False) -> str:
+        """Return a human-readable description of the generator interface."""
+        rendered = _format_schema_block(self.schema())
+        if print_to_stdout:
+            print(rendered)
+        return rendered
+
+    def accessors(self) -> dict[str, str]:
+        """Return accessor descriptions keyed by accessor method name."""
+        mapping = {}
+        for item in self.ACCESSOR_DOCS:
+            name, _, description = item.partition(': ')
+            mapping[name] = description or ''
+        return mapping
+
+    def show_schema(self) -> str:
+        """Print and return the generator schema."""
+        return self.describe(print_to_stdout=True)
+
 
 class NamespaceGenerator:
     """A typed view into a sub-namespace of a generator's builder."""
+
+    NAMESPACE_LABEL = 'Namespace view'
+    NAMESPACE_SUMMARY = 'Typed view into part of a builder.'
+    ACCESSOR_DOCS: tuple[str, ...] = ()
+    MUTATOR_DOCS: tuple[str, ...] = ()
+    NOTES: tuple[str, ...] = ()
 
     def __init__(self, root: BaseInputGenerator, parent=None, namespace_path: str | None = None) -> None:
         self.root = root
@@ -548,6 +735,40 @@ class NamespaceGenerator:
 
     def _join(self, relative_path: str | None = None) -> str:
         return join_namespace_path(self.namespace_path, relative_path)
+
+    def __repr__(self):
+        return self.describe()
+
+    def _repr_pretty_(self, p, cycle=None) -> None:
+        """Pretty representation for IPython and notebooks."""
+        p.text(self.describe())
+
+    def schema(self) -> dict[str, Any]:
+        """Return a structured description of the namespace view."""
+        location = self.namespace_path or '<root>'
+        current = []
+        if self.builder is not None:
+            try:
+                current.append(f'namespace path: {location}')
+                current.append(f'content: {self.namespace}')
+            except Exception:  # pragma: no cover - defensive for partially constructed builders
+                current.append(f'namespace path: {location}')
+        return {
+            'title': f'{self.__class__.__name__}: {self.NAMESPACE_LABEL}',
+            'summary': self.NAMESPACE_SUMMARY,
+            'details': {'path': location},
+            'accessors': list(self.ACCESSOR_DOCS),
+            'mutators': list(self.MUTATOR_DOCS),
+            'notes': list(self.NOTES),
+            'current': current,
+        }
+
+    def describe(self, print_to_stdout: bool = False) -> str:
+        """Return a human-readable description of the namespace interface."""
+        rendered = _format_schema_block(self.schema())
+        if print_to_stdout:
+            print(rendered)
+        return rendered
 
     def set_incar(self, value=None, **kwargs):
         updates = deepcopy(value or {})
@@ -621,9 +842,26 @@ class NamespaceGenerator:
 class VaspCalcNamespaceGenerator(NamespaceGenerator):
     """Typed generator for a VASP child namespace."""
 
+    NAMESPACE_LABEL = 'VASP calculation branch'
+    NAMESPACE_SUMMARY = 'Configure one VASP execution namespace.'
+    MUTATOR_DOCS = (
+        'set_incar(...): update INCAR-like parameters',
+        'set_settings(...): update parser/settings Dict',
+        'set_options(...): update scheduler metadata options',
+        'set_resources(...): update metadata.options.resources',
+        'set_code(...): replace the code node',
+        'set_kspacing(...): set k-point spacing',
+        'set_kpoints(...): attach explicit k-points',
+        'set_kpoints_mesh(...): attach a Monkhorst-Pack mesh',
+    )
+
 
 class RelaxSettingsGenerator(NamespaceGenerator):
     """Generator for a relax workflow namespace exposing ``relax_settings``."""
+
+    NAMESPACE_LABEL = 'Relax settings branch'
+    NAMESPACE_SUMMARY = 'Configure workflow-level relaxation settings.'
+    MUTATOR_DOCS = ('set_relax_settings(...): update relax_settings',)
 
     def set_relax_settings(self, value=None, **kwargs):
         updates = deepcopy(value or {})
@@ -634,6 +872,14 @@ class RelaxSettingsGenerator(NamespaceGenerator):
 class RelaxNamespaceGenerator(NamespaceGenerator):
     """Generator for a relax workflow namespace."""
 
+    NAMESPACE_LABEL = 'Relax workflow branch'
+    NAMESPACE_SUMMARY = 'Configure the child relax workflow.'
+    ACCESSOR_DOCS = (
+        'vasp(): access the underlying VASP calculation namespace',
+        'relax(): access the workflow relax_settings namespace',
+    )
+    NOTES = ('Use relax().vasp() for calc inputs and relax().relax() for relax_settings.',)
+
     def vasp(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self.root, self, self._join('vasp'))
 
@@ -641,8 +887,82 @@ class RelaxNamespaceGenerator(NamespaceGenerator):
         return RelaxSettingsGenerator(self.root, self, self.namespace_path)
 
 
+class StaticNamespaceGenerator(VaspCalcNamespaceGenerator):
+    """Generator for a final static calculation namespace."""
+
+    NAMESPACE_LABEL = 'Final static branch'
+    NAMESPACE_SUMMARY = 'Configure the final single-point/static calculation.'
+
+
+class PathNamespaceGenerator(NamespaceGenerator):
+    """Generator for path-generation controls."""
+
+    NAMESPACE_LABEL = 'Band-path controls'
+    NAMESPACE_SUMMARY = 'Compatibility view over top-level band-path controls.'
+    MUTATOR_DOCS = (
+        'set_band_settings(...): update top-level band_settings',
+        'set_bs_kpoints(...): set explicit band-path k-points',
+    )
+    NOTES = ('Top-level band_settings and bs_kpoints are canonical; path() is a compatibility alias.',)
+
+    def _sibling_path(self, leaf: str) -> str:
+        if self.namespace_path.endswith('path'):
+            parent = self.namespace_path.rsplit('.', 1)[0] if '.' in self.namespace_path else ''
+            candidate = join_namespace_path(parent, leaf)
+            try:
+                self.root._get_path_value(candidate)
+                return candidate
+            except AttributeError:
+                pass
+        return self._join(leaf)
+
+    def set_band_settings(self, value=None, **kwargs):
+        updates = deepcopy(value or {})
+        updates.update(kwargs)
+        return self.root._update_compatible_dict_paths(self._sibling_path('band_settings'), updates)
+
+    def set_bs_kpoints(self, kpoints):
+        return self.root._set_compatible_path_value(self._sibling_path('bs_kpoints'), kpoints)
+
+
+class ReuseNamespaceGenerator(NamespaceGenerator):
+    """Generator for restart/reuse controls."""
+
+    NAMESPACE_LABEL = 'Reuse controls'
+    NAMESPACE_SUMMARY = 'Attach restart inputs for reuse-driven execution.'
+    MUTATOR_DOCS = (
+        'use_restart_folder(...): set reuse.restart_folder',
+        'use_chgcar(...): set reuse.chgcar',
+        'skip_scf(...): skip SCF using restart_folder or chgcar',
+    )
+
+    def use_restart_folder(self, folder: orm.RemoteData):
+        self.root._set_path_value(self._join('restart_folder'), folder)
+        return self
+
+    def use_chgcar(self, chgcar):
+        self.root._set_path_value(self._join('chgcar'), chgcar)
+        return self
+
+    def skip_scf(self, *, restart_folder: orm.RemoteData | None = None, chgcar=None):
+        if restart_folder is None and chgcar is None:
+            raise ValueError('skip_scf requires either a restart_folder or a chgcar.')
+        if restart_folder is not None:
+            self.use_restart_folder(restart_folder)
+        if chgcar is not None:
+            self.use_chgcar(chgcar)
+        return self
+
+
 class BandsChildGenerator(VaspCalcNamespaceGenerator):
     """Generator for the band-structure NSCF child namespace."""
+
+    NAMESPACE_LABEL = 'Band-structure child branch'
+    NAMESPACE_SUMMARY = 'Configure the explicit bands child of an NSCF workflow.'
+    MUTATOR_DOCS = VaspCalcNamespaceGenerator.MUTATOR_DOCS + (
+        'enable(): keep the bands child active',
+        'disable(): disable bands by switching to DOS-only mode',
+    )
 
     def enable(self):
         return self
@@ -653,6 +973,14 @@ class BandsChildGenerator(VaspCalcNamespaceGenerator):
 
 class DosChildGenerator(VaspCalcNamespaceGenerator):
     """Generator for the DOS child namespace."""
+
+    NAMESPACE_LABEL = 'DOS child branch'
+    NAMESPACE_SUMMARY = 'Configure the explicit DOS child of an NSCF workflow.'
+    MUTATOR_DOCS = VaspCalcNamespaceGenerator.MUTATOR_DOCS + (
+        'enable(distance=None): enable DOS and optionally set dos_kpoints_distance',
+        'disable(): disable DOS',
+        'set_kpoints_distance(...): update dos_kpoints_distance',
+    )
 
     def enable(self, distance: float | None = None):
         self.parent.set_run_dos(True)
@@ -672,6 +1000,41 @@ class DosChildGenerator(VaspCalcNamespaceGenerator):
 class NscfNamespaceGenerator(NamespaceGenerator):
     """Generator for an NSCF execution namespace."""
 
+    NAMESPACE_LABEL = 'NSCF execution branch'
+    NAMESPACE_SUMMARY = 'Configure semilocal SCF/NSCF execution.'
+    ACCESSOR_DOCS = (
+        'scf(): access the SCF child namespace',
+        'bands(): access the bands child namespace',
+        'dos(): access the DOS child namespace',
+        'reuse(): access restart/reuse inputs',
+    )
+    MUTATOR_DOCS = (
+        'set_band_settings(...): update top-level band_settings',
+        'set_bs_kpoints(...): set explicit band-path k-points',
+        'enable_dos(distance=None): enable DOS and optionally set dos_kpoints_distance',
+        'set_only_dos(flag=True): disable bands and keep DOS only',
+        'set_run_dos(flag=True): toggle DOS execution',
+        'use_restart_folder(...): attach restart_folder under reuse',
+        'use_chgcar(...): attach chgcar under reuse',
+        'skip_scf(...): skip SCF using restart_folder or chgcar',
+    )
+
+    def _sibling_path(self, leaf: str) -> str:
+        if self.namespace_path.endswith('nscf'):
+            parent = self.namespace_path.rsplit('.', 1)[0] if '.' in self.namespace_path else ''
+            candidate = join_namespace_path(parent, leaf)
+            try:
+                self.root._get_path_value(candidate)
+                return candidate
+            except AttributeError:
+                candidate = join_namespace_path(parent, 'path', leaf)
+                try:
+                    self.root._get_path_value(candidate)
+                    return candidate
+                except AttributeError:
+                    pass
+        return self._join(leaf)
+
     def scf(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self.root, self, self._join('scf'))
 
@@ -681,31 +1044,25 @@ class NscfNamespaceGenerator(NamespaceGenerator):
     def dos(self) -> DosChildGenerator:
         return DosChildGenerator(self.root, self, self._join('dos'))
 
+    def reuse(self) -> ReuseNamespaceGenerator:
+        return ReuseNamespaceGenerator(self.root, self, self._join('reuse'))
+
     def set_band_settings(self, value=None, **kwargs):
         updates = deepcopy(value or {})
         updates.update(kwargs)
-        return self.root._update_dict_path(self._join('band_settings'), updates)
+        return self.root._update_compatible_dict_paths(self._sibling_path('band_settings'), updates)
 
     def set_bs_kpoints(self, kpoints):
-        self.root._set_path_value(self._join('bs_kpoints'), kpoints)
-        return self
+        return self.root._set_compatible_path_value(self._sibling_path('bs_kpoints'), kpoints)
 
     def use_restart_folder(self, folder: orm.RemoteData):
-        self.root._set_path_value(self._join('restart_folder'), folder)
-        return self
+        return self.reuse().use_restart_folder(folder)
 
     def use_chgcar(self, chgcar):
-        self.root._set_path_value(self._join('chgcar'), chgcar)
-        return self
+        return self.reuse().use_chgcar(chgcar)
 
     def skip_scf(self, *, restart_folder: orm.RemoteData | None = None, chgcar=None):
-        if restart_folder is None and chgcar is None:
-            raise ValueError('skip_scf requires either a restart_folder or a chgcar.')
-        if restart_folder is not None:
-            self.use_restart_folder(restart_folder)
-        if chgcar is not None:
-            self.use_chgcar(chgcar)
-        return self
+        return self.reuse().skip_scf(restart_folder=restart_folder, chgcar=chgcar)
 
     def enable_dos(self, distance: float | None = None):
         self.set_run_dos(True)
@@ -722,15 +1079,75 @@ class NscfNamespaceGenerator(NamespaceGenerator):
         return self
 
 
+class BandsWorkflowNamespaceGenerator(NamespaceGenerator):
+    """Generator for a nested bands workflow namespace."""
+
+    NAMESPACE_LABEL = 'Nested bands workflow branch'
+    NAMESPACE_SUMMARY = 'Configure a child VaspBandsWorkChain inside a larger workflow.'
+    ACCESSOR_DOCS = (
+        'path(): access compatibility path controls',
+        'nscf(): access the semilocal NSCF execution branch',
+        'scf(): shortcut for bands().nscf().scf()',
+        'bands(): shortcut for bands().nscf().bands()',
+        'dos(): shortcut for bands().nscf().dos()',
+    )
+    MUTATOR_DOCS = (
+        'set_band_settings(...): update the child bands workflow band_settings',
+        'set_bs_kpoints(...): set explicit child band-path k-points',
+        'enable_dos(distance=None): enable DOS for the child bands workflow',
+    )
+
+    def path(self) -> PathNamespaceGenerator:
+        return PathNamespaceGenerator(self.root, self, self._join('path'))
+
+    def nscf(self) -> NscfNamespaceGenerator:
+        namespace_path = self._join('nscf')
+        return NscfNamespaceGenerator(self.root, self, namespace_path)
+
+    def scf(self) -> VaspCalcNamespaceGenerator:
+        return self.nscf().scf()
+
+    def bands(self) -> BandsChildGenerator:
+        return self.nscf().bands()
+
+    def dos(self) -> DosChildGenerator:
+        return self.nscf().dos()
+
+    def set_band_settings(self, value=None, **kwargs):
+        return self.path().set_band_settings(value, **kwargs)
+
+    def set_bs_kpoints(self, kpoints):
+        return self.path().set_bs_kpoints(kpoints)
+
+    def use_restart_folder(self, folder: orm.RemoteData):
+        return self.nscf().use_restart_folder(folder)
+
+    def use_chgcar(self, chgcar):
+        return self.nscf().use_chgcar(chgcar)
+
+    def enable_dos(self, distance: float | None = None):
+        self.set_band_settings(run_dos=True)
+        return self.dos().enable(distance=distance)
+
+
 class StageGenerator(NamespaceGenerator):
     """Generator for stage-local override Dicts in staged workflows."""
 
+    NAMESPACE_LABEL = 'Stage override branch'
+    NAMESPACE_SUMMARY = 'Configure stage-local overrides for staged workflows.'
+    MUTATOR_DOCS = (
+        'set_incar(...): update stage-local parameters.incar',
+        'set_settings(...): update stage-local settings',
+        'set_options(...): update stage-local options',
+        'set_relax_settings(...): update stage-local relax_settings',
+    )
+
     def __init__(self, root: BaseInputGenerator, stage: int | str, parent=None) -> None:
-        super().__init__(root, parent=parent, namespace_path='')
+        super().__init__(root, parent=parent, namespace_path=f'stage_{stage}')
         self.stage = str(stage)
 
     def _stage_port(self, kind: str) -> str:
-        return f'stage_{self.stage}_{kind}'
+        return self._join(kind)
 
     def set_incar(self, value=None, **kwargs):
         updates = deepcopy(value or {})
@@ -757,6 +1174,17 @@ class VaspInputGenerator(BaseInputGenerator):
     Updater for VaspWorkChain's builder
     """
 
+    WORKFLOW_LABEL = 'Single VASP workchain'
+    WORKFLOW_SUMMARY = 'Configure one vasp.v2.vasp workflow builder.'
+    CANONICAL_PORTS = ('structure', 'parameters', 'settings', 'kpoints/kpoints_spacing')
+    ACCESSOR_DOCS = ('vasp(): access the calculation namespace',)
+    MUTATOR_DOCS = (
+        'set_incar(...): update top-level parameters.incar',
+        'set_settings(...): update top-level settings',
+        'set_options(...): update calc.metadata.options',
+    )
+    EXAMPLES = ('gen.vasp().set_incar(encut=600)',)
+
     def vasp(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self, self, '')
 
@@ -767,12 +1195,28 @@ class VaspRelaxInputGenerator(BaseInputGenerator):
     """
 
     WF_ENTRYPOINT = 'vasp.relax'
+    WORKFLOW_LABEL = 'Relaxation workchain'
+    WORKFLOW_SUMMARY = 'Configure a relaxation workflow with a child VASP branch and relax_settings.'
+    CANONICAL_PORTS = ('structure', 'vasp', 'relax_settings', 'static')
+    ACCESSOR_DOCS = (
+        'vasp(): access the main VASP calculation branch',
+        'relax(): access workflow relax_settings',
+        'static(): access the optional final static branch',
+    )
+    MUTATOR_DOCS = ('set_relax_settings(...): update top-level relax_settings',)
+    EXAMPLES = (
+        'gen.vasp().set_incar(encut=600)',
+        'gen.relax().set_relax_settings(force_cutoff=0.02)',
+    )
 
     def vasp(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self, self, 'vasp')
 
     def relax(self) -> RelaxSettingsGenerator:
         return RelaxSettingsGenerator(self, self, '')
+
+    def static(self) -> StaticNamespaceGenerator:
+        return StaticNamespaceGenerator(self, self, 'static')
 
     def set_relax_settings(self, value=None, **kwargs):
         """Set the `relax_settings` port"""
@@ -797,65 +1241,97 @@ class VaspBandsInputGenerator(BaseInputGenerator):
     """
 
     WF_ENTRYPOINT = 'vasp.bands'
+    WORKFLOW_LABEL = 'Semilocal band-structure workchain'
+    WORKFLOW_SUMMARY = 'Configure optional relax plus semilocal SCF/NSCF execution.'
+    CANONICAL_PORTS = ('structure', 'relax', 'nscf', 'band_settings', 'bs_kpoints')
+    ACCESSOR_DOCS = (
+        'relax(): access the optional relax child workflow',
+        'nscf(): access the semilocal SCF/NSCF execution branch',
+        'path(): compatibility alias for top-level band_settings and bs_kpoints',
+    )
+    MUTATOR_DOCS = (
+        'set_band_settings(...): update top-level band_settings',
+        'set_bs_kpoints(...): set explicit band-path k-points',
+        'use_restart_folder(...): attach restart_folder to the NSCF reuse branch',
+        'use_chgcar(...): attach chgcar to the NSCF reuse branch',
+    )
+    NOTES = ('Canonical usage is gen.relax() and gen.nscf(); path() is a compatibility alias.',)
+    EXAMPLES = (
+        'gen.relax().vasp().set_incar(encut=620)',
+        'gen.nscf().scf().set_incar(ismear=0)',
+        'gen.nscf().dos().enable(distance=0.03)',
+    )
 
     def relax(self) -> RelaxNamespaceGenerator:
         return RelaxNamespaceGenerator(self, self, 'relax')
 
     def nscf(self) -> NscfNamespaceGenerator:
-        return NscfNamespaceGenerator(self, self, '')
+        namespace_path = 'nscf' if self.builder is not None and self.builder.get('nscf') is not None else ''
+        return NscfNamespaceGenerator(self, self, namespace_path)
+
+    def path(self) -> PathNamespaceGenerator:
+        return PathNamespaceGenerator(self, self, 'path')
 
     def set_band_settings(self, value=None, **kwargs):
         """Set the `band_settings` port"""
-        self._set_generic_port_by_dict('band_settings', ports=['band_settings'], value=value, **kwargs)
-        return self
+        updates = deepcopy(value or {})
+        updates.update(kwargs)
+        return self._update_compatible_dict_paths('band_settings', updates)
 
     def set_bs_kpoints(self, kpoints):
-        self.builder.bs_kpoints = kpoints
-        return self
+        return self._set_compatible_path_value('bs_kpoints', kpoints)
 
     def use_restart_folder(self, folder: orm.RemoteData):
-        self.builder.restart_folder = folder
+        self.nscf().use_restart_folder(folder)
+        if self.builder.get('restart_folder') is not None:
+            self.builder.restart_folder = folder
         return self
 
     def use_chgcar(self, chgcar):
-        self.builder.chgcar = chgcar
+        self.nscf().use_chgcar(chgcar)
+        if self.builder.get('chgcar') is not None:
+            self.builder.chgcar = chgcar
         return self
 
     def set_settings(self, *args, **kwargs):
         """Set the settings port"""
-        return super().set_settings(*args, ports=['scf.settings'], update_all=False, **kwargs)
+        ports = ['scf.settings']
+        if self.builder is not None and self.builder.get('nscf') is not None:
+            ports = ['nscf.scf.settings', 'scf.settings']
+        return super().set_settings(*args, ports=ports, update_all=False, **kwargs)
 
     def build(self, structure, code=None, protocol=None, overrides=None, run_relax=True, **kwargs):
         """
         Generate builder base on a given structure and overrides (if supplied)
         """
-        protocol = protocol or self.protocol
-        overrides = overrides or {}
-        code = code or self.preset.default_code
-        options = kwargs.pop('options', {})
-        options = recursive_merge(self.preset.get_code_specific_options(code, 'options'), options)
-
-        builder = WorkflowFactory(self.WF_ENTRYPOINT).get_builder_from_protocol(
-            code=orm.load_code(code),
-            structure=structure,
+        build_request = self._resolve_build_request(
+            code=code,
             protocol=protocol,
             overrides=overrides,
-            options=options,
+            options=kwargs.pop('options', {}),
+        )
+
+        builder = WorkflowFactory(self.WF_ENTRYPOINT).get_builder_from_protocol(
+            code=self._load_code_node(build_request['code']),
+            structure=structure,
+            protocol=build_request['protocol'],
+            overrides=build_request['overrides'],
+            options=build_request['options'],
             run_relax=run_relax,
             **kwargs,
         )
-        self.builder = builder
-        # Apply other settings
-        self.set_settings(self.preset.get_code_specific_options(code, 'settings'))
-        # Apply other settings
-        self.set_incar(self.preset.get_code_specific_options(code, 'incar'))
-        return builder
+        return self._finalize_builder(builder, profile_config=build_request['profile_config'])
 
 
 class VaspConvergenceInputGenerator(BaseInputGenerator):
     """Updater for VaspConvergenceWorkChain"""
 
     WF_ENTRYPOINT = 'vasp.converge'
+    WORKFLOW_LABEL = 'Convergence workchain'
+    WORKFLOW_SUMMARY = 'Configure cutoff and k-point convergence tests around one VASP child branch.'
+    CANONICAL_PORTS = ('structure', 'vasp', 'conv_settings')
+    ACCESSOR_DOCS = ('vasp(): access the child VASP calculation branch',)
+    MUTATOR_DOCS = ('set_conv_settings(...): update conv_settings',)
 
     def vasp(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self, self, 'vasp')
@@ -867,15 +1343,65 @@ class VaspConvergenceInputGenerator(BaseInputGenerator):
 
 
 class VaspHybridBandsInputGenerator(VaspBandsInputGenerator):
-    """Update for VaspHybridBandsWorkChain"""
+    """Input generator for ``VaspHybridBandsWorkChain``."""
 
     WF_ENTRYPOINT = 'vasp.hybrid_bands'
+    WORKFLOW_LABEL = 'Hybrid band-structure workchain'
+    WORKFLOW_SUMMARY = 'Configure optional relax plus hybrid split-path SCF execution.'
+    CANONICAL_PORTS = ('structure', 'relax', 'scf', 'band_settings', 'bs_kpoints')
+    ACCESSOR_DOCS = (
+        'relax(): access the optional relax child workflow',
+        'scf(): access the hybrid SCF branch used for split-path runs',
+    )
+    MUTATOR_DOCS = (
+        'set_band_settings(...): update top-level band_settings',
+        'set_bs_kpoints(...): set explicit band-path k-points',
+    )
+    NOTES = ('Hybrid bands uses scf(), not nscf(). It does not expose reuse or DOS branches.',)
+    EXAMPLES = (
+        'gen.relax().vasp().set_incar(encut=620)',
+        'gen.scf().set_incar(ismear=0)',
+        'gen.set_band_settings(kpoints_per_split=150)',
+    )
+
+    def scf(self) -> VaspCalcNamespaceGenerator:
+        return VaspCalcNamespaceGenerator(self, self, 'scf')
+
+    def nscf(self) -> NscfNamespaceGenerator:  # pragma: no cover - defensive API guard
+        raise AttributeError('VaspHybridBandsInputGenerator uses `scf()`, not `nscf()`.')
+
+    def use_restart_folder(self, folder: orm.RemoteData):  # pragma: no cover - defensive API guard
+        raise AttributeError('VaspHybridBandsInputGenerator does not expose restart-folder reuse inputs.')
+
+    def use_chgcar(self, chgcar):  # pragma: no cover - defensive API guard
+        raise AttributeError('VaspHybridBandsInputGenerator does not expose CHGCAR reuse inputs.')
+
+    def set_settings(self, *args, **kwargs):
+        """Set the settings port for the hybrid SCF branch."""
+        return super(VaspBandsInputGenerator, self).set_settings(
+            *args, ports=['scf.settings'], update_all=False, **kwargs
+        )
 
 
 class VaspNscfInputGenerator(VaspBandsInputGenerator):
     """Updater for ``VaspNscfWorkChain``."""
 
     WF_ENTRYPOINT = 'vasp.v2.nscf'
+    WORKFLOW_LABEL = 'Standalone NSCF workchain'
+    WORKFLOW_SUMMARY = 'Configure semilocal SCF/NSCF execution without relaxation or path generation.'
+    CANONICAL_PORTS = ('structure', 'scf', 'bands', 'dos', 'reuse', 'band_settings', 'bs_kpoints')
+    ACCESSOR_DOCS = (
+        'scf(): access the SCF child branch',
+        'bands(): access the bands child branch',
+        'dos(): access the DOS child branch',
+        'reuse(): access restart/reuse inputs',
+    )
+    MUTATOR_DOCS = (
+        'set_band_settings(...): update top-level band_settings',
+        'set_bs_kpoints(...): set explicit band-path k-points',
+        'skip_scf(...): skip SCF using restart data',
+        'enable_dos(...): enable DOS and optionally set dos_kpoints_distance',
+    )
 
     def scf(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self, self, 'scf')
@@ -885,6 +1411,9 @@ class VaspNscfInputGenerator(VaspBandsInputGenerator):
 
     def dos(self) -> DosChildGenerator:
         return DosChildGenerator(self, self, 'dos')
+
+    def reuse(self) -> ReuseNamespaceGenerator:
+        return ReuseNamespaceGenerator(self, self, 'reuse')
 
     def skip_scf(self, *, restart_folder: orm.RemoteData | None = None, chgcar=None):
         return self.nscf().skip_scf(restart_folder=restart_folder, chgcar=chgcar)
@@ -903,10 +1432,24 @@ class VaspDoubleRelaxInputGenerator(VaspRelaxInputGenerator):
     """Input generator for ``VaspDoubleRelaxWorkChain``."""
 
     WF_ENTRYPOINT = 'vasp.v2.double_relax'
+    WORKFLOW_LABEL = 'Double-relax workchain'
+    WORKFLOW_SUMMARY = 'Configure a shared relax branch plus stage-local overrides for two relax stages.'
+    CANONICAL_PORTS = ('structure', 'relax', 'stage_1', 'stage_2')
+    ACCESSOR_DOCS = (
+        'relax(): access shared relax inputs',
+        'stage_1(): access first-stage overrides',
+        'stage_2(): access second-stage overrides',
+    )
+    EXAMPLES = (
+        'gen.relax().vasp().set_incar(encut=520)',
+        'gen.stage_2().set_relax_settings(force_cutoff=0.02)',
+    )
 
     def build(self, structure, code=None, protocol=None, overrides=None, **kwargs):
         """Build the staged double-relax workflow without assuming a top-level ``vasp`` namespace."""
-        return BaseInputGenerator.build(self, structure=structure, code=code, protocol=protocol, overrides=overrides, **kwargs)
+        return BaseInputGenerator.build(
+            self, structure=structure, code=code, protocol=protocol, overrides=overrides, **kwargs
+        )
 
     def relax(self) -> RelaxNamespaceGenerator:
         return RelaxNamespaceGenerator(self, self, 'relax')
@@ -922,32 +1465,59 @@ class VaspRelaxBandsInputGenerator(VaspBandsInputGenerator):
     """Input generator for ``VaspRelaxBandsWorkChain``."""
 
     WF_ENTRYPOINT = 'vasp.v2.relax_bands'
+    WORKFLOW_LABEL = 'Relax-plus-bands workchain'
+    WORKFLOW_SUMMARY = 'Configure a mandatory relax stage followed by a nested bands workflow.'
+    CANONICAL_PORTS = ('structure', 'relax', 'bands')
+    ACCESSOR_DOCS = (
+        'relax(): access the top-level relax workflow',
+        'bands(): access the nested bands workflow',
+    )
+    EXAMPLES = (
+        'gen.relax().relax().set_relax_settings(force_cutoff=0.02)',
+        'gen.bands().scf().set_incar(ismear=0)',
+        'gen.bands().set_band_settings(run_dos=True)',
+    )
 
     def relax(self) -> RelaxNamespaceGenerator:
         return RelaxNamespaceGenerator(self, self, 'relax')
 
-    def bands(self) -> NscfNamespaceGenerator:
-        return NscfNamespaceGenerator(self, self, 'bands')
+    def bands(self) -> BandsWorkflowNamespaceGenerator:
+        return BandsWorkflowNamespaceGenerator(self, self, 'bands')
 
-    def build(self, structure, code=None, protocol=None, overrides=None, **kwargs):
+    def set_settings(self, *args, **kwargs):
+        """Set settings across the nested relax+bands workflow namespaces."""
+        return BaseInputGenerator.set_settings(self, *args, update_all=True, **kwargs)
+
+    def build(
+        self,
+        structure,
+        code=None,
+        protocol=None,
+        overrides=None,
+        relax_protocol=None,
+        band_protocol=None,
+        **kwargs,
+    ):
         """Generate a builder for the native relax-plus-bands workflow."""
-        protocol = protocol or self.protocol
-        overrides = overrides or {}
-        code = code or self.preset.default_code
-        options = kwargs.pop('options', {})
-        options = recursive_merge(self.preset.get_code_specific_options(code, 'options'), options)
+        build_request = self._resolve_build_request(
+            code=code,
+            protocol=protocol,
+            overrides=overrides,
+            options=kwargs.pop('options', {}),
+        )
+        relax_protocol = build_request['protocol'] if relax_protocol is None else relax_protocol
+        band_protocol = build_request['protocol'] if band_protocol is None else band_protocol
 
         builder = WorkflowFactory(self.WF_ENTRYPOINT).get_builder_from_protocol(
-            code=orm.load_code(code),
+            code=self._load_code_node(build_request['code']),
             structure=structure,
-            relax_protocol=protocol,
-            band_protocol=protocol,
-            overrides=overrides,
-            options=options,
+            relax_protocol=relax_protocol,
+            band_protocol=band_protocol,
+            overrides=build_request['overrides'],
+            options=build_request['options'],
             **kwargs,
         )
-        self.builder = builder
-        return builder
+        return self._finalize_builder(builder, profile_config=build_request['profile_config'])
 
 
 class VaspMPGGADoubleRelaxInputGenerator(BaseInputGenerator):
