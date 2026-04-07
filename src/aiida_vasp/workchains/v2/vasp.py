@@ -438,7 +438,7 @@ A nested dictionary containing the following keys:
             builder.clean_workdir = orm.Bool(inputs['clean_workdir'])
 
         # Configure the kpoints
-        if 'kpoints' in inputs:
+        if 'kpoints' in inputs and inputs['kpoints'] is not None:
             if isinstance(inputs['kpoints'], orm.Data):
                 builder.kpoints = inputs['kpoints']
             # Has mesh been explicitly supplied?
@@ -449,7 +449,7 @@ A nested dictionary containing the following keys:
                 builder.kpoints = kpoints
             elif 'spacing' in inputs['kpoints']:
                 builder.kpoints_spacing = orm.Float(inputs['kpoints']['spacing'])
-        else:
+        elif 'kpoints_spacing' in inputs and inputs['kpoints_spacing'] is not None:
             builder.kpoints_spacing = orm.Float(inputs['kpoints_spacing'])
 
         # Apply maximum iteration
@@ -620,8 +620,8 @@ A nested dictionary containing the following keys:
             kpoints.set_cell_from_structure(self.ctx.inputs.structure)
             kpoints.set_kpoints_mesh_from_density(self.inputs.kpoints_spacing.value * np.pi * 2)
             self.ctx.inputs.kpoints = kpoints
-        else:
-            raise InputValidationError("Must supply either 'kpoints' or 'kpoints_spacing'")
+        elif 'kspacing' not in self.ctx.inputs.parameters:
+            raise InputValidationError("Must supply either 'kpoints', 'kpoints_spacing' or INCAR 'kspacing'")
 
         # Setup LDAU keys
         if 'ldau_mapping' in self.inputs:

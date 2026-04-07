@@ -69,14 +69,32 @@ class PymatgenInputAdaptor:
         :param pmg_kwargs: A dictionary containing additional keyword arguments to pass to the pymatgen input set
         :type pmg_kwargs: dict or None
 
-        :raises AssertionError: If set_name is not in KNOWN_SETS
+        :raises ValueError: If set_name is not in KNOWN_SETS
         """
-        assert set_name in self.KNOWN_SETS, f'Unsupported set name: {set_name}'
+        if set_name not in self.KNOWN_SETS:
+            raise ValueError(f'Unsupported set name: {set_name}')
         self._overrides = incar_overrides or {}
         self._verbose = verbose
         self._pmg_kwargs = pmg_kwargs or {}
         self.set_name = set_name
         self._load_data()
+
+    def _get_pmgset(self, structure: orm.StructureData):
+        """Instantiate and return the underlying pymatgen input set."""
+        return self._pmg_class(structure.get_pymatgen(), **self._pmg_kwargs)
+
+    def _get_applied_incar_dict(self, structure: orm.StructureData) -> Dict:
+        """Return the pymatgen INCAR after applying overrides."""
+        pmgset = self._get_pmgset(structure)
+        incar_dict = {key.lower(): value for key, value in pmgset.incar.items()}
+
+        for key, value in self._overrides.items():
+            if value is None:
+                incar_dict.pop(key, None)
+            else:
+                incar_dict[key] = value
+
+        return incar_dict
 
     def _load_data(self) -> None:
         """
@@ -106,21 +124,11 @@ class PymatgenInputAdaptor:
         :returns: Dictionary of INCAR parameters
         :rtype: dict or orm.Dict
         """
-        ps = structure.get_pymatgen()
-        pmgset = self._pmg_class(ps, **self._pmg_kwargs)
-        incar_dict = {key.lower(): value for key, value in pmgset.incar.items()}
-        # Apply the overrides
-        for key, value in self._overrides.items():
-            if value is None:
-                if key in incar_dict:
-                    incar_dict.pop(key)
-            else:
-                incar_dict[key] = value
+        incar_dict = self._get_applied_incar_dict(structure)
 
         # pop icharg which conflicts with aiida-vasp's input checks
         incar_dict.pop('icharg', None)
         incar_dict.pop('istart', None)
-        incar_dict.pop('kspacing', None)
 
         if raw_python:
             return incar_dict
@@ -139,9 +147,9 @@ class PymatgenInputAdaptor:
         :returns: Dictionary mapping element names to pseudopotential symbols
         :rtype: dict
         """
-        ps = structure.get_pymatgen()
-        pmgset = self._pmg_class(ps, **self._pmg_kwargs)
-        return {p.element: p.symbol for p in pmgset.potcar}
+        pmgset = self._get_pmgset(structure)
+        element_mapping = {p.element: p.symbol for p in pmgset.potcar}
+        return {kind.name: element_mapping[structure.get_kind(kind.name).symbol] for kind in structure.kinds}
 
     def get_potential_family(self) -> str:
         """
@@ -178,8 +186,7 @@ class PymatgenInputAdaptor:
         :returns: K-points data object, or None if no k-points are specified
         :rtype: orm.KpointsData or None
         """
-        ps = structure.get_pymatgen()
-        pmgset = self._pmg_class(ps, **self._pmg_kwargs)
+        pmgset = self._get_pmgset(structure)
         if pmgset.kpoints is None:
             return None
         # Currently only supports Gamma and Monkhorst-Pack
@@ -199,10 +206,8 @@ class PymatgenInputAdaptor:
         :returns: K-point spacing value or None if not specified
         :rtype: float or None
         """
-        ps = structure.get_pymatgen()
-        pmgset = self._pmg_class(ps, **self._pmg_kwargs)
-        incar_dict = {key.lower(): value for key, value in pmgset.incar.items()}
-        kspacing = incar_dict.pop('kspacing', None)
+        incar_dict = self._get_applied_incar_dict(structure)
+        kspacing = incar_dict.get('kspacing')
         if kspacing is not None:
             return kspacing / np.pi / 2
         return None
@@ -217,7 +222,9 @@ class PymatgenInputAdaptor:
         else:
             inputs['parameters'] = incar
         # Setup the kpoints
-        inputs['kpoints'] = self.get_kpoints(structure)
+        kpoints = self.get_kpoints(structure)
+        if kpoints is not None:
+            inputs['kpoints'] = kpoints
         # Setup the potentials
         if is_workchain:
             inputs['potential_family'] = self.get_potential_family()

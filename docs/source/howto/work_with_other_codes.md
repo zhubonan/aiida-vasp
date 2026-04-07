@@ -193,6 +193,13 @@ There are a few differences to note:
 2. In addition to the calculation input, one needs to define resources requested from the computing cluster's scheduler. This is because the `submit` method submits all calculation data to the daemon which takes care the rests, rather than having the user manually transfer the data to the remote machine, submit the job, and then retrieve the results. In fact, what gets submitted is a *workflow* which may apply automatic restarts and error corrections if needed.
 3. Care should be taken to valid the **actual** calculation parameters as `MPRelaxSet` returns some parameters that are controllbed by higher-level workchain in the framework of `aiida-vasp`, such as `ibrion`, `nsw` and `isif`. These parameters may need to be removed (set to `None`) via overrides.
 
+:::{note}
+If a pymatgen input set uses `KSPACING` instead of an explicit `KPOINTS` mesh, `aiida-vasp`
+now preserves the `KSPACING` setting in INCAR for the `vasp.v2.vasp` path instead of forcing
+an explicit `kpoints` or `kpoints_spacing` input. If `KGAMMA = False` is also present, that
+setting is preserved as well and VASP will generate a Monkhorst-Pack mesh internally.
+:::
+
 The `VaspInputGenerator` also takes an argument of the **preset** name which gives a higher level of control over how the calculation
 should be configured. The **preset** includes which [protocol](../concepts/protocols)  should be used, what overrides should be applied as well as how they should be adapted for different types of workflow as well as for different Code/Computers.
 For example, different `NCORE` may be applied when running VASP on different machines.

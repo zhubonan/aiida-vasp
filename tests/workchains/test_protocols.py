@@ -2,6 +2,8 @@ import sys
 import types
 
 import pytest
+from aiida.engine.utils import instantiate_process
+from aiida.manage.manager import get_manager
 
 from aiida_vasp.workchains.v2 import (
     VaspBandsWorkChain,
@@ -79,6 +81,53 @@ def test_vasp_protocol_pmg_overrides_none(monkeypatch, basic_env, mock_vasp, vas
 
     assert builder.structure == vasp_structure
     assert builder.parameters['incar']['encut'] == 520
+
+
+@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+def test_vasp_protocol_pmg_kspacing_only(monkeypatch, basic_env, mock_vasp, vasp_structure, potcar_family_name):
+    """Known pymatgen-style protocols should preserve INCAR KSPACING/KGAMMA when no explicit k-points are supplied."""
+
+    class FakeAdaptor:
+        KNOWN_SETS = {'FakeSet'}
+
+        def __init__(self, protocol, incar_overrides=None, pmg_kwargs=None):
+            self.protocol = protocol
+            self.incar_overrides = incar_overrides
+            self.pmg_kwargs = pmg_kwargs
+
+        def get_inputs(self, structure, is_workchain=True, overrides=None):
+            potential_mapping = {kind: kind for kind in structure.get_kind_names()}
+            if 'In' in potential_mapping:
+                potential_mapping['In'] = 'In_d'
+            return {
+                'potential_family': potcar_family_name,
+                'potential_mapping': potential_mapping,
+                'parameters': {'incar': {'encut': 520, 'kspacing': 0.22, 'kgamma': False}},
+                'calc': {'metadata': {'options': {'resources': {'num_machines': 1}}}},
+                'meta_parameters': {'ediff_per_atom': 1.0e-6},
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        'aiida_vasp.protocols.pmg',
+        types.SimpleNamespace(PymatgenInputAdaptor=FakeAdaptor),
+    )
+
+    builder = VaspWorkChain.get_builder_from_protocol(code=mock_vasp, structure=vasp_structure, protocol='FakeSet')
+
+    assert builder.structure == vasp_structure
+    assert builder.parameters['incar']['kspacing'] == 0.22
+    assert builder.parameters['incar']['kgamma'] is False
+    assert 'kpoints' not in builder
+    assert 'kpoints_spacing' not in builder
+
+    manager = get_manager()
+    runner = manager.get_runner()
+    process = instantiate_process(runner, VaspWorkChain, **builder)
+
+    assert process.setup() is None
+    assert process.init_inputs() is None
+    assert 'kpoints' not in process.ctx.inputs
 
 
 @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)

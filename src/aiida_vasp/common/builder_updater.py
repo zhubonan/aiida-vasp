@@ -509,11 +509,10 @@ class VaspBuilderUpdater(BaseBuilderUpdater):
             inset = PymatgenInputSet(set_name, overrides=overrides_, verbose=self.verbose, pmg_kwargs=pmg_kwargs)
             # PymatgenInputSet uses explicit kpoints
             kpt = inset.get_kpoints(structure)
-            # Use kpoints mesh or kspacing provided by pymatgen inputset
+            # Use explicit kpoints when provided by the pymatgen input set. Otherwise preserve
+            # the INCAR KSPACING/KGAMMA settings and let the workchain/calcjob handle them.
             if kpt is not None:
                 self.namespace_vasp.kpoints = kpt
-            else:
-                self.namespace_vasp.kpoints_spacing = orm.Float(inset.get_kpoints_spacing(structure))
         else:
             inset = VASPInputSet(set_name, overrides=overrides_, verbose=self.verbose)
             self.namespace_vasp.kpoints_spacing = orm.Float(inset.get_kpoints_spacing())

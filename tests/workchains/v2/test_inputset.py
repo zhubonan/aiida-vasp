@@ -2,6 +2,8 @@
 Test for input set specifications
 """
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from aiida import orm
@@ -127,3 +129,33 @@ def test_pmg(fe_atoms, feo_atoms):
         assert pmgset.kpoints.kpts[0] == tuple(vpmgset.get_kpoints(structure).get_kpoints_mesh()[0])
         if psp_dir:
             assert {p.element: p.symbol for p in pmgset.potcar} == vpmgset.get_pp_mapping(structure)
+
+
+@pytest.mark.skipif(MPRelaxSet is None, reason='pymatgen is not installed')
+def test_pmg_kind_aware_mapping_and_kspacing(aiida_profile):
+    """The compatibility layer should preserve KSPACING and map POTCARs by kind name."""
+
+    class FakeSet:
+        CONFIG = {'POTCAR_FUNCTIONAL': 'PBE_54'}
+
+        def __init__(self, structure, **kwargs):
+            self.incar = {'ENCUT': 520, 'KSPACING': 0.22, 'KGAMMA': False}
+            self.kpoints = None
+            self.potcar = [SimpleNamespace(element='Si', symbol='Si')]
+
+    si = bulk('Si', 'diamond', 5.4)
+    si.set_tags([1] * len(si))
+    structure = orm.StructureData(ase=si)
+
+    vpmgset = PymatgenInputSet.__new__(PymatgenInputSet)
+    vpmgset._pmg_class = FakeSet
+    vpmgset._pmg_kwargs = {}
+    vpmgset.set_name = 'FakeSet'
+    vpmgset.overrides = {}
+
+    out = vpmgset.get_input_dict(structure)
+    assert out['kspacing'] == 0.22
+    assert out['kgamma'] is False
+    assert vpmgset.get_kpoints(structure) is None
+    assert vpmgset.get_kpoints_spacing(structure) == 0.22 / np.pi / 2
+    assert vpmgset.get_pp_mapping(structure) == {'Si1': 'Si'}
