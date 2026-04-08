@@ -503,6 +503,7 @@ class VaspParser(Parser):
         # ERROR_DID_NOT_FINISH (700) is for time-killed jobs, while ERROR_VASP_CRITICAL_ERROR (703) is for
         # explicit VASP errors like INCAR configuration issues.
         if run_status.get('early_crash') is True:
+            # Check quantities['notifications'] from StreamParser for ERROR notifications
             if 'notifications' in quantities:
                 notifications = quantities['notifications']
                 for notif in notifications:
@@ -510,7 +511,7 @@ class VaspParser(Parser):
                         # Extract the first line of the error message for cleaner output
                         error_message = notif.get('message', 'Unknown critical error').split('\n')[0]
                         return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=error_message)
-            # If no ERROR notifications but crashed, fall back to ERROR_DID_NOT_FINISH
+            # Note: early_crash always implies finished=False, but we check explicitly as a safety fallback
             if run_status['finished'] is False:
                 return self.exit_codes.ERROR_DID_NOT_FINISH
 

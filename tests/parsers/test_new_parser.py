@@ -591,3 +591,60 @@ STOP 1
         assert 'kind' in notif
         assert 'name' in notif
         assert notif['kind'] == 'ERROR', 'Notification should be of kind ERROR'
+
+
+def test_early_crash_magnetization_property(request, calc_with_retrieved):
+    """
+    Test that OutcarParser.magnetization property handles early_crash gracefully.
+    When VASP crashes before first SCF iteration, site_magnetization returns None,
+    and magnetization property should not raise AttributeError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        retrieved_path = pathlib.Path(tmpdir) / 'retrieved'
+        retrieved_path.mkdir()
+
+        # Create an empty OUTCAR (no SCF iterations)
+        (retrieved_path / 'OUTCAR').write_text('')
+        # Create minimal vasp_output
+        (retrieved_path / 'vasp_output').write_text('running on 4 cores\n')
+        # Create minimal files
+        (retrieved_path / 'vasprun.xml').write_text('')
+        (retrieved_path / 'CONTCAR').write_text('')
+
+        settings_dict = {'parser_settings': {'check_completeness': False, 'critical_objects': []}}
+        node = calc_with_retrieved(str(retrieved_path), settings_dict)
+        parser = VaspParser(node)
+        exit_code = parser.parse(retrieved_tempoary_folder=str(retrieved_path))
+
+        # Should return exit code 700 (DID_NOT_FINISH) since no ERROR notifications
+        assert exit_code is not None
+        # The key point: parsing should not raise AttributeError from magnetization property
+        # If it did, the parse() call would have failed with an exception
+
+
+def test_early_crash_without_error_notifications(request, calc_with_retrieved):
+    """
+    Test that early crash calculations are handled gracefully.
+    The parser should not crash and should return an appropriate exit code.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        retrieved_path = pathlib.Path(tmpdir) / 'retrieved'
+        retrieved_path.mkdir()
+
+        # Create an empty OUTCAR (triggers early_crash)
+        (retrieved_path / 'OUTCAR').write_text('')
+        # Create minimal vasp_output
+        (retrieved_path / 'vasp_output').write_text('running on 4 cores\n')
+        # Create minimal files
+        (retrieved_path / 'vasprun.xml').write_text('')
+        (retrieved_path / 'CONTCAR').write_text('')
+
+        settings_dict = {'parser_settings': {'check_completeness': False, 'critical_objects': []}}
+        node = calc_with_retrieved(str(retrieved_path), settings_dict)
+        parser = VaspParser(node)
+        exit_code = parser.parse(retrieved_tempoary_folder=str(retrieved_path))
+
+        # The key point: parser should not crash and should return a valid exit code
+        # It could be 700 (DID_NOT_FINISH) or 703 (CRITICAL_ERROR) depending on what notifications are found
+        assert exit_code is not None
+        assert exit_code.status in [700, 703]

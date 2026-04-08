@@ -176,9 +176,11 @@ class OutcarParser(BaseFileParser):
 
         :returns: A list containing an entry that is the total magnetization in the cell in unit of
                   Bohr magneton. The magnetization returned is the one associated with the electrons for the
-                  last electronic step.
+                  last electronic step. Returns None if the calculation crashed before the first SCF step.
         :rtype: list
         """
+        if self._early_crash:
+            return None
         magnetization = self.site_magnetization
         if magnetization is not None:
             magnetization = magnetization['full_cell']
@@ -208,8 +210,12 @@ class VtstNebOutcarParser(OutcarParser):
     def _init_from_handler(self, handler: Any) -> None:
         """Initial from the handler."""
         super()._init_from_handler(handler)
-        # Parse the NEB results from the handle and store in a dictionary
-        self._parsed_neb_data = _parse_neb_outputs(handler)
+        # Only parse NEB-specific data if the parent OUTCAR parsing succeeded
+        if not self._early_crash:
+            # Parse the NEB results from the handle and store in a dictionary
+            self._parsed_neb_data = _parse_neb_outputs(handler)
+        else:
+            self._parsed_neb_data = {}
 
     @property
     def neb_data(self):
