@@ -257,7 +257,7 @@ class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         self.ctx.static_input_additions = AttributeDict()
 
         # Set the verbose flag
-        if 'verbose' in self.inputs:
+        if self.inputs.get('verbose'):
             self.ctx.verbose = self.inputs.verbose.value
         else:
             self.ctx.verbose = self._verbose  # Hard-coded default

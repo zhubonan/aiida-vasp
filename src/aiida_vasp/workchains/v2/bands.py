@@ -307,7 +307,7 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         only_dos = self.inputs.band_settings['only_dos']
 
         if only_dos is False:
-            if 'bands' in self.inputs:
+            if self.inputs.get('bands') is not None:
                 bands_input = AttributeDict(self.exposed_inputs(base_work, namespace='bands'))
             else:
                 bands_input = AttributeDict(
@@ -875,9 +875,9 @@ class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
         else:
             inputs = AttributeDict()
             inputs.scf = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='scf'))
-            if 'bands' in self.inputs:
+            if self.inputs.get('bands') is not None:
                 inputs.bands = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='bands'))
-            if 'dos' in self.inputs:
+            if self.inputs.get('dos') is not None:
                 inputs.dos = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='dos'))
         inputs.metadata = {'call_link_label': 'nscf', 'label': self.get_appended_label('NSCF')}
         inputs.structure = self.ctx.current_structure

@@ -339,7 +339,7 @@ class VaspCalculation(VaspCalcBase):
         super().verify_inputs()
         _parameters = self.inputs.parameters.get_dict()
         _lorbit = _parameters.get('lorbit', 0)
-        if 'settings' in self.inputs:
+        if 'settings' in self.inputs and self.inputs.settings is not None:
             _settings = self.inputs.settings.get_dict()
         else:
             _settings = {}
@@ -421,7 +421,7 @@ class VaspCalculation(VaspCalcBase):
                     raise FileNotFoundError(f'Could not find WAVECAR in {remote_folder.get_remote_path()}')
 
         # Process the vdw_kernel input
-        if 'vdw_kernel' in self.inputs:
+        if self.inputs.get('vdw_kernel') is not None:
             calcinfo.local_copy_list.append(
                 (self.inputs.vdw_kernel.uuid, self.inputs.vdw_kernel.filename, 'vdw_kernel.bindat')
             )

@@ -16,6 +16,13 @@ from aiida_vasp.data.potcar import PotcarData
 from .core_flows import VaspDoubleRelaxWorkChain
 
 
+# Lazy import of PymatgenInputAdaptor to avoid ImportError if pymatgen is not installed
+def _get_pymatgen_adaptor():
+    from aiida_vasp.protocols.pmg import PymatgenInputAdaptor  # noqa: PLC0415
+
+    return PymatgenInputAdaptor
+
+
 def _recursive_merge_many(*values: dict | None) -> dict:
     """Merge many nested dictionaries."""
     output: dict[str, Any] = {}
@@ -88,11 +95,22 @@ def _get_pmg_input_overrides(
     incar_overrides: dict | None = None,
     pmg_kwargs: dict | None = None,
 ) -> dict:
-    """Extract native aiida-vasp input deltas from a pymatgen input set."""
+    """Extract native aiida-vasp input deltas from a pymatgen input set.
+
+    Note: Any INCAR overrides with value None will be converted to use the $!del special operation
+    to ensure the key is deleted during recursive_merge with protocol defaults.
+    """
     from aiida_vasp.protocols.pmg import PymatgenInputAdaptor  # noqa: PLC0415
 
     adaptor = PymatgenInputAdaptor(set_name, incar_overrides=incar_overrides, pmg_kwargs=pmg_kwargs)
     inputs: dict[str, Any] = {'parameters': {'incar': adaptor.get_incar_dict(structure, raw_python=True)}}
+
+    # Convert any None values in incar_overrides to $!del for proper deletion during merge
+    if incar_overrides:
+        for key, value in incar_overrides.items():
+            if value is None and key not in inputs['parameters']['incar']:
+                # The pymatgen adaptor removed this key, so we need to explicitly delete it during merge
+                inputs['parameters']['incar'][key] = '$!del'
 
     kpoints = adaptor.get_kpoints(structure)
     if kpoints is not None:
@@ -222,7 +240,8 @@ class VaspMPGGADoubleRelaxWorkChain(VaspDoubleRelaxWorkChain):
         relax_builder.pop('structure')
         builder = cls.get_builder()
         builder.structure = structure
-        _set_builder_namespace(builder.relax, relax_builder._inputs(prune=True))
+        _set_builder_namespace(builder.relax.vasp, relax_builder.vasp._inputs(prune=True))
+        builder.relax.relax_settings = relax_builder.relax_settings
         return builder
 
 
@@ -494,3 +513,155 @@ class VaspMP24RelaxStaticWorkChain(_VaspRelaxStaticWorkChain):
         _set_builder_namespace(builder.relax, relax_builder._inputs(prune=True))
         _set_builder_namespace(builder.static, static_builder._inputs(prune=True))
         return builder
+
+
+class MatPesStaticWorkChain(WorkChain):
+    """MatPES static flow: PBE static followed by r2SCAN static with WAVECAR reuse.
+
+    This workflow implements the MatPES (Materials Project Potential Energy Surface) static
+    calculation flow, which runs a PBE static calculation followed by an r2SCAN static
+    calculation. The WAVECAR from the PBE calculation is reused to accelerate convergence
+    in the r2SCAN calculation.
+
+    The workflow is designed for generating accurate potential energy surface data where
+    force and stress accuracy are paramount.
+    """
+
+    _static_workchain = WorkflowFactory('vasp.v2.vasp')
+
+    @classmethod
+    def define(cls, spec: ProcessSpec) -> None:
+        super().define(spec)
+        spec.input('structure', valid_type=(orm.StructureData, orm.CifData))
+        spec.expose_inputs(cls._static_workchain, namespace='static1', exclude=('structure',))
+        spec.expose_inputs(cls._static_workchain, namespace='static2', exclude=('structure',))
+        spec.expose_outputs(cls._static_workchain, namespace='static1')
+        spec.expose_outputs(cls._static_workchain, namespace='static2')
+        spec.outline(
+            cls.run_static1,
+            cls.inspect_static1,
+            cls.run_static2,
+            cls.inspect_static2,
+            cls.results,
+        )
+        spec.exit_code(401, 'ERROR_STATIC1_FAILED', message='The first PBE static calculation failed.')
+        spec.exit_code(402, 'ERROR_STATIC2_FAILED', message='The second r2SCAN static calculation failed.')
+
+    @classmethod
+    def get_builder_from_protocol(
+        cls,
+        code: orm.AbstractCode,
+        structure: orm.StructureData,
+        overrides: dict | None = None,
+        options: dict | None = None,
+        **kwargs,
+    ):
+        """Create a builder for the MatPES static flow.
+
+        Parameters
+        ----------
+        code : orm.AbstractCode
+            The VASP code to use.
+        structure : orm.StructureData
+            The input structure.
+        overrides : dict, optional
+            Dictionary of overrides. Can contain 'static1' and 'static2' subdictionaries.
+        options : dict, optional
+            Calculation options.
+        **kwargs
+            Additional keyword arguments passed to the protocol.
+
+        Returns
+        -------
+        ProcessBuilder
+            A builder for the MatPES static flow workchain.
+        """
+        overrides = overrides or {}
+
+        # For pymatgen sets, we build the builder directly to avoid merging with protocol defaults
+        # Build static1 inputs (PBE)
+        pymatgen_input_adaptor = _get_pymatgen_adaptor()
+        static1_adaptor = pymatgen_input_adaptor(
+            'MatPESStaticSet',
+            incar_overrides={'lwave': True},
+            pmg_kwargs={'xc_functional': 'PBE'},
+        )
+        static1_inputs = static1_adaptor.get_inputs(structure, is_workchain=True)
+        # MatPESStaticSet uses KSPACING, so we need to add kpoints_spacing if kpoints is not set
+        if 'kpoints' not in static1_inputs:
+            kpoints_spacing = static1_adaptor.get_kpoints_spacing(structure)
+            if kpoints_spacing is not None:
+                static1_inputs['kpoints_spacing'] = kpoints_spacing
+        static1_inputs.update(_ensure_potential_overrides(structure, overrides.get('static1'), namespace=None))
+
+        # Build static2 inputs (r2SCAN)
+        static2_adaptor = pymatgen_input_adaptor(
+            'MatPESStaticSet',
+            incar_overrides={'gga': None},
+            pmg_kwargs={'xc_functional': 'R2SCAN'},
+        )
+        static2_inputs = static2_adaptor.get_inputs(structure, is_workchain=True)
+        # MatPESStaticSet uses KSPACING, so we need to add kpoints_spacing if kpoints is not set
+        if 'kpoints' not in static2_inputs:
+            kpoints_spacing = static2_adaptor.get_kpoints_spacing(structure)
+            if kpoints_spacing is not None:
+                static2_inputs['kpoints_spacing'] = kpoints_spacing
+        static2_inputs.update(_ensure_potential_overrides(structure, overrides.get('static2'), namespace=None))
+
+        # Build the workchain builder
+        builder = cls.get_builder()
+        builder.structure = structure
+
+        # Set static1 namespace
+        _set_builder_namespace(builder.static1, static1_inputs)
+        builder.static1.code = code
+        if options:
+            builder.static1.calc = AttributeDict()
+            builder.static1.calc.metadata = AttributeDict()
+            builder.static1.calc.metadata.options = options
+
+        # Set static2 namespace
+        _set_builder_namespace(builder.static2, static2_inputs)
+        builder.static2.code = code
+        if options:
+            builder.static2.calc = AttributeDict()
+            builder.static2.calc.metadata = AttributeDict()
+            builder.static2.calc.metadata.options = options
+
+        return builder
+
+    def run_static1(self) -> ToContext:
+        """Run the first PBE static calculation with LWAVE=True."""
+        inputs = AttributeDict(self.exposed_inputs(self._static_workchain, namespace='static1', agglomerate=True))
+        inputs.structure = self.inputs.structure
+        inputs.metadata.call_link_label = 'static1'
+        inputs.metadata.label = f'{self.inputs.metadata.get("label", "")} STATIC1 PBE'.strip()
+        inputs.keep_last_workdir = orm.Bool(True)
+        running = self.submit(self._static_workchain, **inputs)
+        return ToContext(workchain_static1=running)
+
+    def inspect_static1(self):
+        """Inspect the first PBE static calculation."""
+        if not self.ctx.workchain_static1.is_finished_ok:
+            return self.exit_codes.ERROR_STATIC1_FAILED
+
+    def run_static2(self) -> ToContext:
+        """Run the second r2SCAN static calculation using WAVECAR from static1."""
+        inputs = AttributeDict(self.exposed_inputs(self._static_workchain, namespace='static2', agglomerate=True))
+        inputs.structure = self.inputs.structure
+        inputs.metadata.call_link_label = 'static2'
+        inputs.metadata.label = f'{self.inputs.metadata.get("label", "")} STATIC2 R2SCAN'.strip()
+        if 'restart_folder' not in inputs and 'remote_folder' in self.ctx.workchain_static1.outputs:
+            inputs.restart_folder = self.ctx.workchain_static1.outputs.remote_folder
+        running = self.submit(self._static_workchain, **inputs)
+        return ToContext(workchain_static2=running)
+
+    def inspect_static2(self):
+        """Inspect the second r2SCAN static calculation."""
+        if not self.ctx.workchain_static2.is_finished_ok:
+            return self.exit_codes.ERROR_STATIC2_FAILED
+
+    def results(self) -> None:
+        """Expose outputs from both static calculations."""
+        self.out_many(self.exposed_outputs(self.ctx.workchain_static1, self._static_workchain, namespace='static1'))
+        self.out_many(self.exposed_outputs(self.ctx.workchain_static2, self._static_workchain, namespace='static2'))

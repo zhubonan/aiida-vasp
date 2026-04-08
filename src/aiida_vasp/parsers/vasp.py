@@ -499,6 +499,21 @@ class VaspParser(Parser):
             return self.exit_codes.ERROR_DIAGNOSIS_OUTPUTS_MISSING
         run_status = quantities['run_status']
 
+        # For crashed calculations, check for ERROR notifications first to return appropriate exit code
+        # ERROR_DID_NOT_FINISH (700) is for time-killed jobs, while ERROR_VASP_CRITICAL_ERROR (703) is for
+        # explicit VASP errors like INCAR configuration issues.
+        if run_status.get('early_crash') is True:
+            if 'notifications' in quantities:
+                notifications = quantities['notifications']
+                for notif in notifications:
+                    if notif.get('kind') == 'ERROR':
+                        # Extract the first line of the error message for cleaner output
+                        error_message = notif.get('message', 'Unknown critical error').split('\n')[0]
+                        return self.exit_codes.ERROR_VASP_CRITICAL_ERROR.format(error_message=error_message)
+            # If no ERROR notifications but crashed, fall back to ERROR_DID_NOT_FINISH
+            if run_status['finished'] is False:
+                return self.exit_codes.ERROR_DID_NOT_FINISH
+
         try:
             # We have an overflow in the XML file which is critical, but not reported by VASP in
             # the standard output, so checking this here.

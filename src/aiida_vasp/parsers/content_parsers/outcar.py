@@ -20,6 +20,15 @@ class OutcarParser(BaseFileParser):
     The parser is triggered by using the ``elastic_moduli``, ``magnetization`` or ``site-magnetization``
     ``run_stats`` or ``run_status`` quantity keys.
 
+    When the VASP calculation crashes before the first SCF step (e.g., due to an INCAR configuration error),
+    parsevasp raises a SystemExit. This parser handles that case gracefully by:
+
+    - Setting an ``early_crash`` flag and returning a synthetic ``run_status`` with
+      ``finished=False`` and ``early_crash=True``
+    - Returning an empty dict for ``run_stats`` (allowing the required quantity check to pass)
+    - Returning ``None`` for other quantities that depend on the OUTCAR content
+
+    This ensures that error notifications from ``vasp_output`` are still available even when the calculation crashes.
     """
 
     DEFAULT_SETTINGS = {'quantities_to_parse': ['run_status', 'run_stats']}
@@ -41,6 +50,8 @@ class OutcarParser(BaseFileParser):
         },
     }
 
+    _early_crash = None  # None=not initialized, False=parsed OK, True=early crash
+
     def _init_from_handler(self, handler: Any) -> None:
         """Initialize a ``parsevasp`` object of ``Outcar`` using a file like handler.
 
@@ -50,8 +61,10 @@ class OutcarParser(BaseFileParser):
 
         try:
             self._content_parser = Outcar(file_handler=handler, logger=self._logger)
+            self._early_crash = False  # Successfully initialized, no crash
         except SystemExit:
-            self._logger.warning('Parsevasp exited abnormally.')
+            self._logger.warning('Parsevasp exited abnormally - calculation likely crashed before first SCF step.')
+            self._early_crash = True  # Crashed during initialization
 
     @property
     def run_status(self):
@@ -65,8 +78,22 @@ class OutcarParser(BaseFileParser):
                   did reached NELM and thus did not converged if the key ``consistent_nelm_breach`` is ``True``,
                   while ``contains_nelm_breach`` is True if one or more ionic steps reached NELM and thus
                   did not converge electronically.
+
+                  When the calculation crashed before completion (e.g., due to an INCAR configuration error),
+                  an additional ``early_crash`` key is set to ``True``, ``finished`` is ``False``, and convergence
+                  fields are set to ``None``.
         :rtype: dict
         """
+        if self._early_crash:
+            # Return a status indicating the calculation crashed before completing
+            return {
+                'finished': False,
+                'electronic_converged': None,
+                'ionic_converged': None,
+                'consistent_nelm_breach': False,
+                'contains_nelm_breach': False,
+                'early_crash': True,
+            }
         status = self._content_parser.get_run_status()
         return status
 
@@ -78,9 +105,14 @@ class OutcarParser(BaseFileParser):
                   that are parsed from the end of the ``OUTCAR`` file. The key names are
                   mostly preserved, except for the memory which is prefixed with ``mem_usage_``.
                   Units are preserved from ``OUTCAR`` and there are some differences between
-                  VASP 5 and 6.
+                  VASP 5 and 6. Returns an empty dictionary if the calculation crashed before
+                  completion.
         :rtype: dict
         """
+        if self._early_crash:
+            # Return empty dict for run_stats when the calculation crashed
+            # This allows the required quantity check to pass
+            return {}
         stats = self._content_parser.get_run_stats()
         return stats
 
@@ -96,6 +128,8 @@ class OutcarParser(BaseFileParser):
         :rtype: dict
         """
 
+        if self._early_crash:
+            return None
         sym = self._content_parser.get_symmetry()
         return sym
 
@@ -110,6 +144,8 @@ class OutcarParser(BaseFileParser):
         :rtype: dict
         """
 
+        if self._early_crash:
+            return None
         moduli = self._content_parser.get_elastic_moduli()
         return moduli
 
@@ -129,6 +165,8 @@ class OutcarParser(BaseFileParser):
                   electronic step in a list.
         :rtype: dict
         """
+        if self._early_crash:
+            return None
         magnetization = self._content_parser.get_magnetization()
         return magnetization
 

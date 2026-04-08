@@ -108,6 +108,7 @@ graphs = ["matplotlib"]
 "vasp.v2.mp_meta_gga_relax_static" = "aiida_vasp.workchains.v2.mp:VaspMPMetaGGARelaxStaticWorkChain"
 "vasp.v2.mp24_double_relax" = "aiida_vasp.workchains.v2.mp:VaspMP24DoubleRelaxWorkChain"
 "vasp.v2.mp24_relax_static" = "aiida_vasp.workchains.v2.mp:VaspMP24RelaxStaticWorkChain"
+"vasp.v2.matpes_static" = "aiida_vasp.workchains.v2.mp:MatPesStaticWorkChain"
 
 [project.entry-points."aiida.groups"]
 "vasp.potcar" = "aiida_vasp.data.potcar:PotcarGroup"

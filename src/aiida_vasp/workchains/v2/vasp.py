@@ -574,7 +574,7 @@ A nested dictionary containing the following keys:
         # Options is very special, not storable and should be
         # wrapped in the metadata dictionary, which is also not storable
         # and should contain an entry for options
-        if 'options' in self.inputs:
+        if self.inputs.get('options'):
             options = {}
             options.update(self.inputs.options)
             self.ctx.inputs.metadata = {'options': options}

@@ -1,4 +1,5 @@
 import pathlib
+import tempfile
 
 import numpy as np
 import pytest
@@ -522,3 +523,71 @@ def test_notification_composer(parser_with_retrieved):
     )
     exit_code = composer.compose()
     assert exit_code.status == 703
+
+
+def test_minimal_misc_on_missing_required_quantities(request, calc_with_retrieved):
+    """
+    Test that misc output is created even when required quantities (run_status, run_stats) are missing.
+    This ensures error notifications are always available for debugging.
+    """
+    # Test with data that will fail to parse required quantities
+    # Create a scenario where OUTCAR is empty/missing but vasp_output has error notifications
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create an incomplete retrieved folder
+        retrieved_path = pathlib.Path(tmpdir) / 'retrieved'
+        retrieved_path.mkdir()
+
+        # Create a vasp_output with an error notification
+        vasp_output_content = """
+running on 4 cores
+ -----------------------------------------------------------------------------
+|                                                                             |
+|     EEEEEEE  RRRRRR   RRRRRR   OOOOOOO  RRRRRR      ###     ###     ###     |
+|     E        R     R  R     R  O     O  R     R     ###     ###     ###     |
+|     EEEEE    RRRRRR   RRRRRR   O     O  RRRRRR       #       #       #      |
+|     E        R   R    R   R    O     O  R   R                               |
+|     EEEEEEE  R     R  R     R  OOOOOOO  R     R     ###     ###     ###     |
+|                                                                             |
+|     XC_FOCK_READER: Only one tag (GGA, METAGGA or XC) to specify the        |
+|     functional can be used.                                                 |
+|                                                                             |
+|       ---->  I REFUSE TO CONTINUE WITH THIS SICK JOB ... BYE!!! <----       |
+|                                                                             |
+ -----------------------------------------------------------------------------
+
+STOP 1
+"""
+        (retrieved_path / 'vasp_output').write_text(vasp_output_content)
+        # Create empty vasprun.xml and OUTCAR to simulate parsing failure
+        (retrieved_path / 'vasprun.xml').write_text('')
+        (retrieved_path / 'OUTCAR').write_text('')
+        # Create empty CONTCAR
+        (retrieved_path / 'CONTCAR').write_text('')
+
+        settings_dict = {
+            'parser_settings': {
+                'check_completeness': False,
+                'critical_objects': [],
+            }
+        }
+        node = calc_with_retrieved(str(retrieved_path), settings_dict)
+        parser = VaspParser(node)
+        exit_code = parser.parse(retrieved_tempoary_folder=str(retrieved_path))
+
+        # Should fail due to critical error in the calculation
+        assert exit_code is not None
+        assert exit_code.status == 703, f'Expected ERROR_VASP_CRITICAL_ERROR (703) but got {exit_code.status}'
+        assert 'XC_FOCK_READER' in exit_code.message, 'Exit code should contain the error message'
+
+        # But misc output should still be created with available information
+        assert 'misc' in parser.outputs, 'misc output should be created even when required quantities are missing'
+        misc_dict = parser.outputs['misc'].get_dict()
+
+        # The misc should have at least some information - specifically the error notification
+        assert 'notifications' in misc_dict, 'misc should contain error notifications'
+        assert len(misc_dict['notifications']) > 0, 'should have at least one notification'
+        # Check that the error notification contains the expected information
+        notif = misc_dict['notifications'][0]
+        assert 'kind' in notif
+        assert 'name' in notif
+        assert notif['kind'] == 'ERROR', 'Notification should be of kind ERROR'

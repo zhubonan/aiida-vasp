@@ -34,30 +34,26 @@ def _merge_dict_node(
     return update_nested_dict_node(node, update_dict, extend_list=extend_list)
 
 
-def _apply_stage_overrides(
+def _apply_vasp_stage_overrides(
     inputs: AttributeDict,
     *,
     parameters: orm.Dict | dict | None = None,
     settings: orm.Dict | dict | None = None,
     options: orm.Dict | dict | None = None,
-    relax_settings: orm.Dict | dict | None = None,
 ) -> AttributeDict:
-    """Apply stage-local overrides to a relax-workchain input namespace."""
+    """Apply stage-local overrides directly to a ``VaspWorkChain`` input namespace."""
     if parameters:
-        inputs.vasp.parameters = _merge_dict_node(inputs.vasp.parameters, parameters)
+        inputs.parameters = _merge_dict_node(inputs.parameters, parameters)
 
     if settings:
-        current = inputs.vasp.get('settings')
-        inputs.vasp.settings = _merge_dict_node(current, settings, extend_list=True)
-
-    if relax_settings:
-        inputs.relax_settings = _merge_dict_node(inputs.relax_settings, relax_settings)
+        current = inputs.get('settings')
+        inputs.settings = _merge_dict_node(current, settings, extend_list=True)
 
     option_updates = _dict_from_input(options)
     if option_updates:
-        current_options = deepcopy(dict(inputs.vasp.calc.metadata.options))
+        current_options = deepcopy(dict(inputs.calc.metadata.options))
         update_nested_dict(current_options, option_updates)
-        inputs.vasp.calc.metadata.options = current_options
+        inputs.calc.metadata.options = current_options
 
     return inputs
 
@@ -77,15 +73,24 @@ def _get_stage_override(inputs, stage: int, key: str):
 
 
 class VaspDoubleRelaxWorkChain(WorkChain):
-    """Perform two back-to-back native ``VaspRelaxWorkChain`` calculations."""
+    """Perform two chained relax-like ``VaspWorkChain`` calculations."""
 
-    _relax_workchain = WorkflowFactory('vasp.v2.relax')
+    _base_workchain = WorkflowFactory('vasp.v2.vasp')
+    _relax_protocol_workchain = WorkflowFactory('vasp.v2.relax')
+    _relax_workchain = _relax_protocol_workchain
 
     @classmethod
     def define(cls, spec: ProcessSpec) -> None:
         super().define(spec)
         spec.input('structure', valid_type=(orm.StructureData, orm.CifData))
-        spec.expose_inputs(cls._relax_workchain, namespace='relax', exclude=('structure',))
+        spec.input_namespace('relax')
+        spec.expose_inputs(cls._base_workchain, namespace='relax.vasp', exclude=('structure',))
+        spec.input(
+            'relax.relax_settings',
+            valid_type=orm.Dict,
+            required=False,
+            serializer=to_aiida_type,
+        )
         spec.input_namespace('stage_1', required=False)
         spec.input('stage_1.parameters', valid_type=orm.Dict, required=False, serializer=to_aiida_type)
         spec.input('stage_1.settings', valid_type=orm.Dict, required=False, serializer=to_aiida_type)
@@ -104,7 +109,7 @@ class VaspDoubleRelaxWorkChain(WorkChain):
         spec.input('stage_2_settings', valid_type=orm.Dict, required=False, serializer=to_aiida_type)
         spec.input('stage_2_options', valid_type=orm.Dict, required=False, serializer=to_aiida_type)
         spec.input('stage_2_relax_settings', valid_type=orm.Dict, required=False, serializer=to_aiida_type)
-        spec.expose_outputs(cls._relax_workchain)
+        spec.expose_outputs(cls._base_workchain)
         spec.output('stage_1_relax.structure', valid_type=orm.StructureData, required=False)
         spec.output('stage_2_relax.structure', valid_type=orm.StructureData, required=False)
         spec.outline(
@@ -134,7 +139,7 @@ class VaspDoubleRelaxWorkChain(WorkChain):
         stage_1_overrides = stage_1_overrides or {}
         stage_2_overrides = stage_2_overrides or {}
 
-        relax_builder = cls._relax_workchain.get_builder_from_protocol(
+        relax_builder = cls._relax_protocol_workchain.get_builder_from_protocol(
             code=code,
             structure=structure,
             protocol=protocol,
@@ -146,7 +151,8 @@ class VaspDoubleRelaxWorkChain(WorkChain):
 
         builder = cls.get_builder()
         builder.structure = structure
-        _set_builder_namespace(builder.relax, relax_builder._inputs(prune=True))
+        _set_builder_namespace(builder.relax.vasp, relax_builder.vasp._inputs(prune=True))
+        builder.relax.relax_settings = relax_builder.relax_settings
 
         for key in ('parameters', 'settings', 'options', 'relax_settings'):
             value = stage_1_overrides.get(key)
@@ -161,24 +167,40 @@ class VaspDoubleRelaxWorkChain(WorkChain):
         return builder
 
     def _prepare_relax_inputs(self, structure: orm.StructureData, stage: int) -> AttributeDict:
-        """Create inputs for a relax stage."""
-        inputs = AttributeDict(self.exposed_inputs(self._relax_workchain, namespace='relax', agglomerate=True))
+        """Create inputs for a relax-like ``VaspWorkChain`` stage."""
+        inputs = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='relax.vasp', agglomerate=True))
         inputs.structure = structure
         inputs.metadata.call_link_label = f'relax_{stage}'
         inputs.metadata.label = f'{self.inputs.metadata.get("label", "")} RELAX {stage}'.strip()
-        _apply_stage_overrides(
+        relax_settings = _dict_from_input(self.inputs.relax.get('relax_settings'))
+        relax_settings.update(_dict_from_input(_get_stage_override(self.inputs, stage, 'relax_settings')))
+        if relax_settings:
+            inputs.parameters = _merge_dict_node(inputs.parameters, {'relax': relax_settings})
+
+        parser_settings = {
+            'parser_settings': {
+                'include_node': ['structure', 'trajectory'],
+                'include_quantity': ['energies'],
+            }
+        }
+        current_settings = inputs.get('settings')
+        inputs.settings = _merge_dict_node(current_settings, parser_settings, extend_list=True)
+
+        _apply_vasp_stage_overrides(
             inputs,
             parameters=_get_stage_override(self.inputs, stage, 'parameters'),
             settings=_get_stage_override(self.inputs, stage, 'settings'),
             options=_get_stage_override(self.inputs, stage, 'options'),
-            relax_settings=_get_stage_override(self.inputs, stage, 'relax_settings'),
         )
+
+        if stage == 1:
+            inputs.keep_last_workdir = orm.Bool(True)
         return inputs
 
     def run_stage_1(self) -> ToContext:
         """Run the first relaxation."""
         inputs = self._prepare_relax_inputs(self.inputs.structure, 1)
-        running = self.submit(self._relax_workchain, **inputs)
+        running = self.submit(self._base_workchain, **inputs)
         return ToContext(workchain_stage_1=running)
 
     def inspect_stage_1(self):
@@ -193,9 +215,9 @@ class VaspDoubleRelaxWorkChain(WorkChain):
     def run_stage_2(self) -> ToContext:
         """Run the second relaxation from the first-stage output."""
         inputs = self._prepare_relax_inputs(self.ctx.current_structure, 2)
-        if self.ctx.restart_folder is not None and 'restart_folder' not in inputs.vasp:
-            inputs.vasp.restart_folder = self.ctx.restart_folder
-        running = self.submit(self._relax_workchain, **inputs)
+        if self.ctx.restart_folder is not None and 'restart_folder' not in inputs:
+            inputs.restart_folder = self.ctx.restart_folder
+        running = self.submit(self._base_workchain, **inputs)
         return ToContext(workchain_stage_2=running)
 
     def inspect_stage_2(self):
@@ -207,7 +229,7 @@ class VaspDoubleRelaxWorkChain(WorkChain):
 
     def results(self) -> None:
         """Expose the outputs of the second relaxation."""
-        self.out_many(self.exposed_outputs(self.ctx.workchain_stage_2, self._relax_workchain))
+        self.out_many(self.exposed_outputs(self.ctx.workchain_stage_2, self._base_workchain))
 
 
 class VaspRelaxBandsWorkChain(WorkChain):

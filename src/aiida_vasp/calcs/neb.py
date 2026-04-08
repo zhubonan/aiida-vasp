@@ -237,7 +237,7 @@ class VaspNEBCalculation(VaspCalculation):
     def write_additional(self, folder: Folder, calcinfo: CalcInfo) -> None:
         """Handle extra inputs that are not written by the per-image submission loop."""
         _ = folder
-        if 'vdw_kernel' in self.inputs:
+        if self.inputs.get('vdw_kernel') is not None:
             calcinfo.local_copy_list.append(
                 (self.inputs.vdw_kernel.uuid, self.inputs.vdw_kernel.filename, 'vdw_kernel.bindat')
             )

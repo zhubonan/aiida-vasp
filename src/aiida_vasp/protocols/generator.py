@@ -34,6 +34,7 @@ __all__ = [
     'VaspMPGGARelaxStaticInputGenerator',
     'VaspMPMetaGGADoubleRelaxInputGenerator',
     'VaspMPMetaGGARelaxStaticInputGenerator',
+    'VaspMatPesStaticInputGenerator',
     'VaspNscfInputGenerator',
     'VaspRelaxBandsInputGenerator',
     'VaspRelaxInputGenerator',
@@ -1599,6 +1600,29 @@ class VaspMP24RelaxStaticInputGenerator(BaseInputGenerator):
 
     def static(self) -> VaspCalcNamespaceGenerator:
         return VaspCalcNamespaceGenerator(self, self, 'static')
+
+
+class VaspMatPesStaticInputGenerator(BaseInputGenerator):
+    """Input generator for ``MatPesStaticWorkChain``."""
+
+    WF_ENTRYPOINT = 'vasp.v2.matpes_static'
+    WORKFLOW_LABEL = 'MatPES static flow workchain'
+    WORKFLOW_SUMMARY = 'Configure PBE static followed by r2SCAN static with WAVECAR reuse.'
+    CANONICAL_PORTS = ('structure', 'static1', 'static2')
+    ACCESSOR_DOCS = (
+        'static1(): access the first PBE static stage',
+        'static2(): access the second r2SCAN static stage',
+    )
+    EXAMPLES = (
+        'gen.static1().set_incar(encut=600)',
+        'gen.static2().set_incar(ismear=0)',
+    )
+
+    def static1(self) -> VaspCalcNamespaceGenerator:
+        return VaspCalcNamespaceGenerator(self, self, 'static1')
+
+    def static2(self) -> VaspCalcNamespaceGenerator:
+        return VaspCalcNamespaceGenerator(self, self, 'static2')
 
 
 def update_dict_node(

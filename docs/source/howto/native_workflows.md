@@ -7,7 +7,11 @@ workchains as building blocks. They do not depend on `atomate2` at runtime.
 ## Double relaxation
 
 The `VaspDoubleRelaxWorkChain` performs two back-to-back
-`VaspRelaxWorkChain` calculations.
+relax-like `VaspWorkChain` calculations.
+The shared `relax` branch still uses the `VaspRelaxWorkChain` protocol inputs to
+define the relax settings and baseline INCAR/k-point defaults, but the runtime
+execution is a plain two-stage `vasp.v2.vasp -> vasp.v2.vasp` chain with
+`restart_folder` passed from stage 1 to stage 2.
 This is useful when the first relaxation changes the lattice enough that a second
 relaxation with refreshed basis and k-point settings is desirable.
 
@@ -107,8 +111,9 @@ the workflow logic extracted from the corresponding `atomate2` VASP flows:
 | `vasp.v2.mp_meta_gga_relax_static` | `VaspMPMetaGGARelaxStaticWorkChain` | MP meta-GGA double relax, then `MPScanStaticSet` static |
 | `vasp.v2.mp24_double_relax` | `VaspMP24DoubleRelaxWorkChain` | `MP24RelaxSet(xc_functional='PBEsol')`, then `MP24RelaxSet(xc_functional='r2SCAN')` |
 | `vasp.v2.mp24_relax_static` | `VaspMP24RelaxStaticWorkChain` | MP24 double relax, then `MP24StaticSet(xc_functional='r2SCAN')` |
+| `vasp.v2.matpes_static` | `MatPesStaticWorkChain` | PBE static, then r2SCAN static with WAVECAR reuse |
 
-All six workflows are launched in the same way:
+All seven workflows are launched in the same way:
 
 ```python
 from aiida.plugins import WorkflowFactory
@@ -142,6 +147,37 @@ The key stage-specific changes are:
   `MP24RelaxSet` stage with `xc_functional='r2SCAN'`, and optionally a final
   `MP24StaticSet` stage with `LELF=True` and `KPAR=1`
 
+## MatPES static flow
+
+The `MatPesStaticWorkChain` implements the MatPES static calculation flow,
+which runs a PBE static calculation followed by an r2SCAN static calculation.
+The WAVECAR from the PBE calculation is reused to accelerate convergence
+in the r2SCAN calculation.
+
+Entry point:
+
+```python
+from aiida.plugins import WorkflowFactory
+
+wc = WorkflowFactory('vasp.v2.matpes_static')
+```
+
+Builder from protocol:
+
+```python
+builder = wc.get_builder_from_protocol(
+    code=code,
+    structure=structure,
+)
+```
+
+The builder exposes:
+- `static1`: inputs for the first PBE static calculation
+- `static2`: inputs for the second r2SCAN static calculation
+
+The workflow is designed for generating accurate potential energy surface
+data where force and stress accuracy are paramount.
+
 ## Input generators
 
 Matching `InputGenerator` classes are available for the new workflows:
@@ -155,6 +191,7 @@ Matching `InputGenerator` classes are available for the new workflows:
 - `VaspMPMetaGGARelaxStaticInputGenerator`
 - `VaspMP24DoubleRelaxInputGenerator`
 - `VaspMP24RelaxStaticInputGenerator`
+- `VaspMatPesStaticInputGenerator`
 
 These live in `aiida_vasp.protocols.generator`.
 
