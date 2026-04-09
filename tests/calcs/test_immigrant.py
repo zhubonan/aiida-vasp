@@ -28,6 +28,7 @@ def test_get_builder(immigrant_with_builder):
     expected_inputs = {'parameters', 'structure', 'kpoints', 'potential'}
     for input_link in expected_inputs:
         assert builder.get(input_link, None) is not None
+    assert builder.metadata.options.resources == {'num_machines': 1}
 
 
 def test_vasp_immigrant(immigrant_with_builder):

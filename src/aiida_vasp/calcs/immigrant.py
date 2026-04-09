@@ -132,7 +132,7 @@ class VaspCalcImporter:
                     potential_family=potential_family,
                     potential_mapping=potential_mapping,
                 )
-        dummy_resources = dummy_resources or {'num_machine': 1}
+        dummy_resources = dummy_resources or {'num_machines': 1}
         builder.metadata.options.resources = dummy_resources
         builder.code = code
         return builder

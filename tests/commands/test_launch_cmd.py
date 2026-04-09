@@ -9,7 +9,7 @@ import pytest
 from aiida.common import AttributeDict
 from click.testing import CliRunner
 
-from aiida_vasp.commands.launch import launch_workchain, list_presets, list_protocols
+from aiida_vasp.commands.launch import launch_workchain, list_presets, list_protocols, load_inputs_from_vasp_folder
 from aiida_vasp.commands.utils import load_structure
 
 
@@ -101,7 +101,7 @@ def test_launch_invalid_code(cmd_params):
         args=['--structure', cmd_params.STRUCTURE_FILE, '--code', 'nonexistent-code', '--label', 'test'],
     )
     assert result.exit_code != 0
-    assert 'nonexistent-code>: No result was found' in result.exception.args[0]
+    assert 'nonexistent-code' in result.output
 
 
 def test_launch_different_workchain_types(cmd_params, run_env):
@@ -237,8 +237,63 @@ Monkhorst-Pack
     )
     assert result.exit_code == 0
     assert 'DRY RUN' in result.output
-    assert 'Loaded structure from VASP folder' in result.output
-    # Test using --match-existing
+
+
+def test_load_inputs_from_vasp_folder_contains_converge_override(monkeypatch, tmp_path):
+    """Convergence overrides should use the public workchain key and VASP-shaped inputs."""
+
+    class DummyStructure:
+        def get_formula(self):
+            return 'Si'
+
+    class DummyDict:
+        def get_dict(self):
+            return {'encut': 400}
+
+    folder = tmp_path / 'vasp'
+    folder.mkdir()
+    for name in ('INCAR', 'POSCAR', 'KPOINTS', 'POTCAR'):
+        (folder / name).write_text('')
+
+    monkeypatch.setattr('aiida_vasp.calcs.immigrant.get_poscar_input', lambda _: DummyStructure())
+    monkeypatch.setattr('aiida_vasp.calcs.immigrant.get_incar_input', lambda _: DummyDict())
+    monkeypatch.setattr('aiida_vasp.calcs.immigrant.get_kpoints_input', lambda *_args, **_kwargs: 'KPOINTS_NODE')
+    monkeypatch.setattr('aiida_vasp.calcs.immigrant.get_potcar_input', lambda *_args, **_kwargs: {'Si': 'POTCAR_NODE'})
+
+    _, overrides_map = load_inputs_from_vasp_folder(folder)
+
+    assert 'converge' in overrides_map
+    assert overrides_map['converge'] == {
+        'parameters': {'incar': {'encut': 400}},
+        'potential': {'Si': 'POTCAR_NODE'},
+        'kpoints': 'KPOINTS_NODE',
+    }
+
+
+def test_launch_wraps_unexpected_errors(cmd_params, monkeypatch):
+    """Unexpected exceptions should surface as Click errors instead of raw tracebacks."""
+    monkeypatch.setattr(
+        'aiida_vasp.commands.utils.load_structure',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError('boom')),
+    )
+
+    result = run_cmd(
+        command='launch',
+        args=['--structure', cmd_params.STRUCTURE_FILE, '--code', 'test-code', '--label', 'test'],
+    )
+
+    assert result.exit_code != 0
+    assert 'Error: boom' in result.output
+
+
+def test_launch_match_existing_with_folder(cmd_params, run_env):
+    """Test matching an existing structure when combining direct and folder inputs."""
+    vasp_folder = Path(cmd_params.VASP_FOLDER)
+    vasp_folder.mkdir()
+    (vasp_folder / 'INCAR').write_text('ENCUT = 400\n')
+    (vasp_folder / 'POSCAR').write_text(Path(cmd_params.STRUCTURE_FILE).read_text())
+    (vasp_folder / 'KPOINTS').write_text('Automatic mesh\n0\nMonkhorst-Pack\n4 4 4\n0 0 0\n')
+
     ext = load_structure(cmd_params.STRUCTURE_FILE).store()
     result = run_cmd(
         command='launch',
@@ -256,6 +311,7 @@ Monkhorst-Pack
         ],
     )
     assert result.exit_code == 0
+    assert 'Loaded structure from VASP folder' in result.output
     assert 'Loaded structure:' in result.output
     assert 'Using existing structure node' in result.output
 

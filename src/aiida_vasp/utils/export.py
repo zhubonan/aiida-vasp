@@ -9,7 +9,7 @@ from typing import Any
 
 from aiida import orm
 from aiida.common.links import LinkType
-from aiida.orm import CalcJobNode, Node, QueryBuilder, WorkChainNode
+from aiida.orm import CalcJobNode, WorkChainNode
 from aiida.plugins import WorkflowFactory
 from aiida.repository import FileType
 
@@ -85,21 +85,21 @@ def _export_workchain(
 
     dst = Path(dst)
     dst.mkdir(exist_ok=True)
-    if work_node.process_class not in (VaspRelaxWorkChain):
+    if not issubclass(work_node.process_class, VaspRelaxWorkChain):
         raise ValueError(
             f'Error {work_node} should be `VaspRelaxWorkChain` or `RelaxWorkChain`, but it is {work_node.process_class}'
         )
 
-    q = QueryBuilder()
-    q.append(Node, filters={'id': work_node.pk})
-    q.append(WorkChainNode, tag='vaspwork', project=['id', '*'])
-    q.order_by({'vaspwork': {'id': 'asc'}})  # Sort by ascending PK
-    for index, (pk, node) in enumerate(q.iterall()):
+    calcjobs = sorted(
+        (node for node in work_node.called_descendants if isinstance(node, orm.CalcJobNode)),
+        key=lambda node: node.pk,
+    )
+    for index, node in enumerate(calcjobs):
         relax_folder = dst / f'relax_calc_{index:03d}'
         try:
             _export_calculation(node, relax_folder, decompress=decompress, include_potcar=include_potcar)
         except (ValueError, AttributeError, KeyError):
-            print(f'Error exporting calculation {pk}')
+            print(f'Error exporting calculation {node.pk}')
 
     # Write POSCAR file for the input
     input_structure = work_node.inputs.structure

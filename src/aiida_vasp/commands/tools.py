@@ -53,6 +53,13 @@ def export(process, folder: str, decompress: bool, include_potcar: bool) -> None
 def select_calcjob_from_work(func):
     """Select calcjob from work"""
 
+    @click.option(
+        '--index',
+        '-i',
+        help='The index of the running calculation to use when multiple calculations are still running',
+        default=0,
+        type=int,
+    )
     @wraps(func)
     def wrapper(*args, **kwargs):
         from aiida import orm
@@ -62,25 +69,23 @@ def select_calcjob_from_work(func):
         index = kwargs.pop('index', 0)
 
         if isinstance(calcjob, orm.WorkChainNode):
-            valid = [process for process in calcjob.called_descendants if not process.is_finished]
-            if len(valid) > 0:
+            valid = [
+                process
+                for process in calcjob.called_descendants
+                if isinstance(process, orm.CalcJobNode) and not process.is_finished
+            ]
+            if not valid:
+                echo.echo_critical('No running calculations found for this workflow.')
+            if index >= len(valid):
+                echo.echo_critical(f'Calculation index {index} is out of range for {len(valid)} running calculations.')
+            if len(valid) > 1:
                 echo.echo_info(
                     f'More than one calculations are still running: {", ".join(str(process.pk) for process in valid)}.'
                     f' Selected {valid[index].pk}'
                 )
-                calcjob = valid[index]
-            else:
-                calcjob = valid[0]
+            calcjob = valid[index]
         kwargs['calcjob'] = calcjob
-        kwargs['index'] = index
-
-        func_ = click.option(
-            '--index',
-            '-i',
-            help='The index of the calculation to cat if multiple calculations are still running',
-            default=0,
-        )(func)
-        return func_(*args, **kwargs)
+        return func(*args, **kwargs)
 
     return wrapper
 
@@ -190,13 +195,16 @@ def relaxcat(workflow, fname: str) -> None:
     """Cat the output of the last calculation of a finished workflow"""
     from aiida import orm
     from aiida.cmdline.commands.cmd_calcjob import calcjob_outputcat
+    from aiida.cmdline.utils import echo
 
-    q = orm.QueryBuilder()
-    q.append(orm.WorkChainNode, filters={'id': workflow.id})
-    q.append(orm.WorkChainNode)
-    q.append(orm.CalcJobNode, tag='calc', project=['*', 'ctime'])
-    q.order_by({'calc': {'ctime': 'desc'}})
-    calc, _ = q.first()
+    calcjobs = sorted(
+        (node for node in workflow.called_descendants if isinstance(node, orm.CalcJobNode)),
+        key=lambda node: node.ctime,
+        reverse=True,
+    )
+    if not calcjobs:
+        echo.echo_critical('No calculations found for this workflow.')
+    calc = calcjobs[0]
 
     click.Context(calcjob_outputcat).invoke(calcjob_outputcat, calcjob=calc, path=fname)
 
@@ -221,15 +229,18 @@ def tailf_command(transport, remotedir: str, fname: str) -> str:
 
     further_params_str = ' '.join(further_params)
 
-    connect_string = (
-        """ "if [ -d {escaped_remotedir} ] ;"""
-        """ then cd {escaped_remotedir} ; {bash_command} -c 'tail -f {escaped_fname}' ; else echo '  ** The directory' ; """
-        """echo '  ** {remotedir}' ; echo '  ** seems to have been deleted, I logout...' ; fi" """.format(
-            bash_command=transport._bash_command_str,
-            escaped_remotedir=f"'{remotedir}'",
-            remotedir=remotedir,
-            escaped_fname=escape_for_bash(fname),
-        )
+    tail_command = (
+        'if [ -d {escaped_remotedir} ] ;'
+        " then cd {escaped_remotedir} ; {bash_command} -c 'tail -f {escaped_fname}' ;"
+        " else echo '  ** The directory' ;"
+        " echo '  ** {remotedir}' ;"
+        " echo '  ** seems to have been deleted, I logout...' ; fi"
+    )
+    connect_string = f' "{tail_command}" '.format(
+        bash_command=transport._bash_command_str,
+        escaped_remotedir=f"'{remotedir}'",
+        remotedir=remotedir,
+        escaped_fname=escape_for_bash(fname),
     )
 
     cmd = 'ssh -t {machine} {further_params} {connect_string}'.format(
