@@ -78,6 +78,9 @@ def monitor_stdout(node: CalcJobNode, transport: Transport, size_threshold_mb: f
     except _FILE_NOT_FOUND_ERRORS:
         # No file yet - do nothing
         return
+    except Exception:
+        # Transient transport error - do nothing and try again later
+        return
     if file_stat.st_size > 1024 * 1024 * size_threshold_mb:
         # Stdout file is dangerously large - truncate it to prevent system crashes
         # This typically indicates convergence problems or infinite loops in VASP
@@ -128,7 +131,7 @@ def monitor_loop_time(
     :rtype: str or None
     """
 
-    outcar_path = str(Path(node.get_remote_workdir(), 'OURCAR'))
+    outcar_path = str(Path(node.get_remote_workdir(), 'OUTCAR'))
     stdout_path = str(Path(node.get_remote_workdir()) / node.process_class._VASP_OUTPUT)
     walltime_limit = node.get_option('max_wallclock_seconds')
     if walltime_limit is None:
@@ -137,7 +140,11 @@ def monitor_loop_time(
 
     # Extract electronic loop timings from OUTCAR file
     # LOOP entries contain timing information for each self-consistency cycle
-    returncode, stdout, _ = transport.exec_command_wait(f"grep 'LOOP:' {outcar_path}")
+    try:
+        returncode, stdout, _ = transport.exec_command_wait(f"grep 'LOOP:' {outcar_path}")
+    except Exception:
+        # Transient transport error - do nothing and try again later
+        return None
 
     # Skip monitoring if no LOOP entries found (calculation hasn't started electronic steps)
     if returncode != 0:
@@ -176,6 +183,9 @@ def monitor_loop_time(
         file_stat = transport.get_attribute(stdout_path)
     except _FILE_NOT_FOUND_ERRORS:
         # Do nothing if the stdout is not there
+        pass
+    except Exception:
+        # Transient transport error - skip stalled check this time
         pass
     else:
         elapsed = time.time() - file_stat.st_mtime

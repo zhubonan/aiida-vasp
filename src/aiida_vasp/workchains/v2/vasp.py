@@ -125,6 +125,7 @@ class VaspWorkChain(BaseRestartWorkChain, WithBuilderUpdater, ProtocolMixin):
         'fast': ['normal', 'veryfast', 'damped'],
         'veryfast': ['normal', 'fast', 'damped'],
         'damped': ['normal', 'fast', 'veryfast'],
+        'all': ['normal', 'fast'],
     }
     _default_unsupported_parameters = {}
     _protocol_tag = 'vasp'  # Search for vasp.yml in protocol directories
@@ -508,6 +509,14 @@ A nested dictionary containing the following keys:
         # Reset the list of valid remote objects and the restart calculation
         self.ctx.last_calc_remote_objects = []
         self.ctx.restart_calc = None
+        # Reset the unfinished flag when the previous calculation had a different exit status.
+        # This replaces the manual reset that was inside the handler body before adding exit_codes
+        # filtering to the decorator. The handler now only fires for ERROR_DID_NOT_FINISH.
+        children = self.ctx.get('children', None)
+        if children:
+            last_child = children[-1]
+            if last_child.exit_status != VaspCalculation.exit_codes.ERROR_DID_NOT_FINISH.status:
+                self.ctx.last_calc_was_unfinished = False
 
     def update_magmom(self, node: Optional[CalcJobNode] = None) -> None:
         """
@@ -647,6 +656,10 @@ A nested dictionary containing the following keys:
                     self.ctx.inputs.parameters['ispin'] = 2
                 # Apply the mapping of the magmoms
                 self.ctx.inputs.parameters['magmom'] = ' '.join(map(str, magmom))
+
+        # Auto-detect whether to ignore transient NELM breaches during ionic relaxation
+        if self.ctx.inputs.parameters.get('nsw', 0) > 0:
+            self.ctx.ignore_transient_nelm_breach = True
 
         # Attach default monitors if not provided by the user
         if not self.inputs.get('monitors') and not settings_dict.get('no_default_monitors', False):
@@ -864,78 +877,11 @@ A nested dictionary containing the following keys:
             return ProcessHandlerReport(do_break=True)
         return None
 
-    @process_handler(
-        priority=799,
-        enabled=False,
-        exit_codes=[VaspCalculation.exit_codes.ERROR_DID_NOT_FINISH],
-    )
-    def handler_unfinished_calc_ionic_alt(self, node: CalcJobNode) -> Optional[ProcessHandlerReport]:
-        """
-        Handled the problem such that the calculation is not finished, e.g. did not reach the
-        end of execution.
-
-        If WAVECAR exists, just resubmit the calculation with the restart folder.
-
-        If it is a geometry optimization, attempt to restart with output structure + WAVECAR.
-        """
-
-        # Check it is a geometry optimization
-        incar = self.ctx.inputs.parameters
-        if incar.get('nsw', -1) > 0:
-            if 'structure' not in node.outputs:
-                self.report('Performing a geometry optimization but the output structure is not found.')
-                return ProcessHandlerReport(
-                    do_break=True,
-                    exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(
-                        message='No output structure for restart.'
-                    ),
-                )  # pylint: disable=no-member
-            self.report('Continuing geometry optimization using the last geometry.')
-            self.ctx.inputs.structure = node.outputs.structure
-            self._setup_restart(node)
-            self.update_magmom(node)
-            return ProcessHandlerReport(do_break=True)
-        return None
-
-    @process_handler(priority=798, enabled=False)
-    def handler_unfinished_calc_generic_alt(self, node: CalcJobNode) -> Optional[ProcessHandlerReport]:
-        """
-        A generic handler for unfinished calculations, we attempt to restart it once.
-        """
-
-        # Only act on this specific return code, otherwise we reset the flag
-        if node.exit_status != VaspCalculation.exit_codes.ERROR_DID_NOT_FINISH.status:
-            self.ctx.last_calc_was_unfinished = False
-            return None
-
-        if self.ctx.last_calc_was_unfinished:
-            msg = (
-                'The last calculation was not completed for the second time, potentially due to insufficient '
-                'walltime/node failure. Please revise the resources request and/or input parameters.'
-            )
-            return ProcessHandlerReport(
-                do_break=True,
-                exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=msg),
-            )  # pylint: disable=no-member
-        self.report(
-            (
-                'The last calculation was not finished - restart using the same set of inputs. '
-                'If it was due to transient problem this may fix it, fingers crossed.'
-            )
-        )
-        self.ctx.last_calc_was_unfinished = True
-        return ProcessHandlerReport(do_break=True)
-
-    @process_handler(priority=900)
+    @process_handler(priority=900, exit_codes=[VaspCalculation.exit_codes.ERROR_DID_NOT_FINISH])
     def handler_unfinished_calc_generic(self, node: CalcJobNode) -> Optional[ProcessHandlerReport]:
         """
         A generic handler for unfinished calculations, we attempt to restart it once.
         """
-
-        # Only act on this specific return code, otherwise we reset the flag
-        if node.exit_status != VaspCalculation.exit_codes.ERROR_DID_NOT_FINISH.status:
-            self.ctx.last_calc_was_unfinished = False
-            return None
 
         if self.ctx.last_calc_was_unfinished:
             msg = (
@@ -956,7 +902,7 @@ A nested dictionary containing the following keys:
         return ProcessHandlerReport(do_break=True)
 
     @process_handler(
-        priority=800,
+        priority=799,
         enabled=False,
         exit_codes=[
             VaspCalculation.exit_codes.ERROR_ELECTRONIC_NOT_CONVERGED,
@@ -1374,16 +1320,6 @@ A nested dictionary containing the following keys:
             )  # pylint: disable=no-member
         return None
 
-    # In this workchain we default to ignore the NELM breaches in the middle of the calculation
-    @process_handler(priority=850, enabled=True)
-    def ignore_nelm_breach_relax(self, node: CalcJobNode) -> None:
-        """
-        Not a actual handler but works as a switch to bypass checks for NELM breaches
-         in the middle of an ionic relaxation.
-        """
-        _ = node
-        self.ctx.ignore_transient_nelm_breach = True
-
     def _calculation_sanity_checks(self, node: CalcJobNode) -> Optional[ProcessHandlerReport]:  # pylint: disable=unused-argument
         """
         Perform additional sanity checks on successfully completed calculation.
@@ -1393,10 +1329,10 @@ A nested dictionary containing the following keys:
         unhandled errors.
         """
         checks = [
-            self._check_misc_output,
-            self._check_calc_is_finished,
-            self._check_electronic_converged,
-            self._check_ionic_converged,
+            self.check_misc_output,
+            self.check_calc_is_finished,
+            self.check_electronic_converged,
+            self.check_ionic_converged,
         ]
 
         # Go though the checks one after another, return report if necessary
