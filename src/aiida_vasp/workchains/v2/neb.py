@@ -255,6 +255,21 @@ class VaspNEBWorkChain(VaspWorkChain):
         self.ctx.inputs.neb_images = output_images
         return None
 
+    @process_handler(priority=3)
+    def check_electronic_converged(self, node: orm.CalcJobNode) -> ProcessHandlerReport | None:
+        """Check if all images have converged electronic structure."""
+        misc = node.outputs.misc.get_dict()
+        run_status = misc['run_status']
+        for key, value in run_status.items():
+            if not value.get('electronic_converged'):
+                self.report(
+                    f'The child calculation {node} - image {key} does not possess a converged electronic structure.'
+                )
+                return ProcessHandlerReport(
+                    exit_code=self.exit_codes.ERROR_ELECTRONIC_STRUCTURE_NOT_CONVERGED, do_break=True
+                )
+        return None
+
     @process_handler(priority=4)
     def check_calc_is_finished(self, node: orm.CalcJobNode) -> ProcessHandlerReport | None:
         """
@@ -266,8 +281,20 @@ class VaspNEBWorkChain(VaspWorkChain):
             if not value.get('finished'):
                 self.report(f'The child calculation {node} - image {key} did not reach the end of execution.')
                 return ProcessHandlerReport(exit_code=self.exit_codes.ERROR_CALCULATION_NOT_FINISHED, do_break=True)
-            return None
+        return None
 
     def _get_run_status(self, node):
-        """Return the run status of the calculation."""
-        return node.outputs.misc['run_status']['01']
+        """Return a merged run status across all NEB images.
+
+        For boolean flags, all images must be True. For ``nelm``, take the max.
+        """
+        run_status = node.outputs.misc['run_status']
+        bool_keys = ('finished', 'electronic_converged', 'ionic_converged', 'contains_nelm_breach')
+        merged = {}
+        for value in run_status.values():
+            for key in bool_keys:
+                if key in value:
+                    merged[key] = merged.get(key, True) and value[key]
+            if 'nelm' in value:
+                merged['nelm'] = max(merged.get('nelm', 0), value['nelm'])
+        return merged

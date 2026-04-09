@@ -86,7 +86,6 @@ MISC_QUANTITIES = (
     'elastic_moduli',
     'symmetries',
     'fermi_level',
-    'band_properties',
     'magnetization',
     'parameters',
 )

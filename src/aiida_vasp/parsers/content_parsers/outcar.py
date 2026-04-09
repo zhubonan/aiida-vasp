@@ -303,7 +303,7 @@ def _parse_neb_outputs(path: Union[str, Path, Any], inputs: Optional[Dict[str, A
 
         elif 'NEB: Tangent' in line:
             tangents = []
-            for isub in range(idx + 2, idx + 99999):
+            for isub in range(idx + 2, len(lines)):
                 subline = lines[isub]
                 if subline.strip():
                     tangents.append([float(tmp) for tmp in subline.split()])

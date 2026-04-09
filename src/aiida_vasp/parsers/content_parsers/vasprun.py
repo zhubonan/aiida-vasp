@@ -670,4 +670,7 @@ def _build_structure(lattice: dict[str, Any]) -> dict[str, Any]:
 
 
 def _invert_dict(dct: dict[Any, Any]) -> dict[Any, Any]:
-    return dct.__class__(map(reversed, dct.items()))
+    result = dct.__class__(map(reversed, dct.items()))
+    if len(result) != len(dct):
+        raise ValueError(f'Cannot invert dict with non-unique values: {dct}')
+    return result

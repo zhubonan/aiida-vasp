@@ -89,10 +89,14 @@ def recursive_merge(left: dict, right: dict) -> dict:
                     del left[key]
                     continue
                 if '$!append' in value_right:
+                    if not isinstance(left[key], list):
+                        raise TypeError(f'Cannot append to non-list value for key "{key}": {type(left[key])}')
                     left[key] = left[key].copy()
                     left[key].append(value_right['$!append'])
                     continue
                 if '$!extend' in value_right:
+                    if not isinstance(left[key], list):
+                        raise TypeError(f'Cannot extend non-list value for key "{key}": {type(left[key])}')
                     left[key] = left[key].copy()
                     left[key].extend(value_right['$!extend'])
                     continue

@@ -139,7 +139,7 @@ class VaspCalculation(VaspCalcBase):
             'vdw_kernel',
             valid_type=orm.SinglefileData,
             required=False,
-            help='The vdw_kerenl.bindat file to be used for vdw calculations.',
+            help='The vdw_kernel.bindat file to be used for vdw calculations.',
         )
         spec.input('metadata.options.input_filename', default='INCAR')
         spec.input('metadata.options.output_filename', default='OUTCAR')
