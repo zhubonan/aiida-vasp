@@ -49,16 +49,16 @@ from aiida import orm
 from aiida.engine import ProcessSpec, WorkChain, append_, calcfunction
 
 from aiida_vasp.protocols import ProtocolMixin
+from aiida_vasp.protocols.generator import VaspConvergenceInputGenerator
 from aiida_vasp.utils.extended_dicts import update_nested_dict_node
 from aiida_vasp.utils.opthold import ConvOptions
 
-from .mixins import WithBuilderUpdater
 from .vasp import VaspWorkChain
 
 # pylint:disable=no-member,unused-argument,no-self-argument,import-outside-toplevel
 
 
-class VaspConvergenceWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
+class VaspConvergenceWorkChain(WorkChain, ProtocolMixin):
     """
     A workchain to perform convergence tests.
 
@@ -423,30 +423,21 @@ def plot_conv_data(cdf: Any, kdf: Any, **kwargs: Any) -> list[Any]:
 
 def get_convergence_builder(structure: orm.StructureData, config: dict[str, Any]):
     """
-    Short cut for getting an VaspBuilderUpdater ready to use
+    Shortcut for building a convergence-workchain builder from protocol inputs.
 
     :structure StructureData: The input structure node.
     :config dict: Configuration dictionary specifying the protocol.
 
-    The following files are used from the configuration: ``code``, ``inputset``, ``conv``, ``options``, ``resources``.
+    Supported configuration keys are ``code``, ``protocol``, ``overrides``, ``conv``, ``options`` and ``resources``.
     """
-    from aiida_vasp.common.builder_updater import VaspBuilderUpdater  # noqa: PLC0415
-
-    conv_builder = VaspConvergenceWorkChain.get_builder()
-
-    upd = VaspBuilderUpdater(conv_builder)
-    upd.use_inputset(
-        structure,
-        config.get('inputset', VaspBuilderUpdater.DEFAULT_INPUTSET),
+    generator = VaspConvergenceInputGenerator(protocol=config.get('protocol'))
+    generator.build(
+        structure=structure,
+        code=config['code'],
         overrides=config.get('overrides', {}),
+        options=config.get('options', {}),
     )
-    upd.set_code(orm.load_code(config['code']))
-
-    upd.set_default_options(**config.get('options', {}))
-    upd.update_resources(**config.get('resources', {}))
-    upd.set_label(f'{structure.label} CONV')
-
-    # Convergence specific options
-    conv = ConvOptions(**config.get('conv', {}))
-    upd.builder.conv_settings = conv.aiida_dict()
-    return upd
+    generator.set_resources(config.get('resources', {}))
+    generator.set_label(f'{structure.label} CONV')
+    generator.set_conv_settings(config.get('conv', {}))
+    return generator

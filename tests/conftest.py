@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import importlib
 import os
 import pathlib
 import subprocess as sp
-import warnings
 
 import numpy as np
 import pytest
@@ -373,25 +371,6 @@ def mock_potcars(aiida_profile, temp_pot_folder):
             str(temp_pot_folder), 'PBE.54', 'Family for mock calculation', stop_if_existing=False
         )
     return None
-
-
-@pytest.fixture()
-def builder_updater(
-    aiida_profile,
-    mock_potcars,
-    mock_vasp,
-):
-    """
-    Return a Builder Updater object for mock-vasp
-    """
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            'ignore',
-            message='The builder_updater module is deprecated.*|The Vasp.*Updater class is deprecated.*',
-            category=DeprecationWarning,
-        )
-        vasp_builder_updater = importlib.import_module('aiida_vasp.common.builder_updater').VaspBuilderUpdater
-        return vasp_builder_updater(code='mock-vasp@localhost')
 
 
 def print_and_export_failed_mock():

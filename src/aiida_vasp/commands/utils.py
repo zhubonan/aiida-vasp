@@ -11,8 +11,8 @@ from aiida.plugins import DataFactory
 from ase.io import read
 
 from aiida_vasp.commands.option_parser import process_dict_option
-from aiida_vasp.common.builder_updater import VaspBuilderUpdater
 from aiida_vasp.parsers.content_parsers.poscar import PoscarParser
+from aiida_vasp.protocols.generator import BaseInputGenerator
 
 
 def load_structure(structure_path: str | Path) -> orm.StructureData:
@@ -75,9 +75,9 @@ def setup_calculation_options(options, resources, max_wallclock_seconds, num_mac
     return options_dict
 
 
-def apply_additional_updates(upd: VaspBuilderUpdater, additional_overrides: dict):
+def apply_additional_updates(upd: BaseInputGenerator, additional_overrides: dict):
     """
-    Apply additional overrides to the builder updater by using the set_xxx methods.
+    Apply additional overrides to an input generator by using the ``set_xxx`` methods.
     """
     if not additional_overrides:
         return
@@ -96,7 +96,7 @@ def apply_additional_updates(upd: VaspBuilderUpdater, additional_overrides: dict
 
 
 def handle_calculation_submission(
-    upd: VaspBuilderUpdater, run_directly: bool, group: str, alias: str | None = None
+    upd: BaseInputGenerator, run_directly: bool, group: str, alias: str | None = None
 ) -> orm.ProcessNode:
     """Handle calculation submission and group assignment."""
     # Submit or run the calculation

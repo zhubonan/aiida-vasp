@@ -23,6 +23,7 @@ Make sure you unset the environmental variables and rerun the tests to check it 
 
 import pytest
 from aiida import orm
+from aiida.engine import run_get_node
 from ase.build import bulk
 
 from aiida_vasp.protocols.generator import (
@@ -111,24 +112,25 @@ def test_silicon_band_hybrid_no_relax(fresh_aiida_env, mock_potcars, mock_vasp_s
     assert results.node.is_finished_ok
 
 
-@pytest.mark.filterwarnings('ignore:The BuilderUpdater functionality is deprecated.*:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:The builder_updater module is deprecated.*:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:The Vasp.*Updater class is deprecated.*:DeprecationWarning')
 def test_silicon_relax_staged(fresh_aiida_env, mock_potcars, mock_vasp_strict):
     """Test running a VASP workchain on silicon using the mock code."""
 
     si = bulk('Si', 'diamond', 5.4)
     si_node = orm.StructureData(ase=si)
 
-    upd = VaspMultiStageRelaxWorkChain.get_builder_updater(code='mock-vasp@localhost')
-    upd.apply_preset(si_node)
-    upd.set_options(custom_scheduler_commands='export MOCK_VASP_UPLOAD_PREFIX=mock_silicon_relax_staged')
+    gen = VaspRelaxInputGenerator()
+    gen.build(structure=si_node, code='mock-vasp@localhost')
+    gen.set_options(custom_scheduler_commands='export MOCK_VASP_UPLOAD_PREFIX=mock_silicon_relax_staged')
 
-    upd.builder.parameters_stages = {
+    builder = VaspMultiStageRelaxWorkChain.get_builder()
+    builder.structure = si_node
+    builder.relax.vasp = gen.builder.vasp
+    builder.relax.relax_settings = gen.builder.relax_settings
+    builder.parameters_stages = {
         '0': orm.Dict(dict={'incar': {'gga': 'pe'}}),
         '1': orm.Dict(dict={'incar': {'encut': 400}}),
     }
-    results = upd.run_get_node()
+    results = run_get_node(builder)
     # Add prefix to the registry folder
     assert results.node.is_finished_ok
 

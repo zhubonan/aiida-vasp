@@ -89,7 +89,7 @@ def launch_workchain(
     alias,
 ):
     """
-    Launch a VASP workchain with the specified protocol and input set.
+    Launch a VASP workchain with the specified preset and protocol.
     """
     from pprint import pformat
 
@@ -118,6 +118,7 @@ def launch_workchain(
         'hybrid_band': VaspHybridBandsInputGenerator,
         'converge': VaspConvergenceInputGenerator,
     }
+    local_folder_overrides = {}
     try:
         # Validate input sources
         if not structure and not from_vasp_folder:
@@ -164,8 +165,8 @@ def launch_workchain(
                     structure_node = existing_node
                     click.echo(f'Using existing structure node with PK: {existing_node.pk}')
 
-        # Initialize the builder updater
-        click.echo(f'Initializing BuilderUpdater with preset: {preset}')
+        # Initialize the input generator
+        click.echo(f'Initializing InputGenerator with preset: {preset}')
         upd_cls = upd_cls_map.get(workchain_type.lower(), VaspInputGenerator)
         upd = upd_cls(preset_name=preset, protocol=protocol)
         # Apply preset with structure
@@ -206,9 +207,7 @@ def launch_workchain(
             click.echo(f'Structure: {structure_node.get_formula()} ({structure_node.label})')
             if from_vasp_folder:
                 click.echo(f'VASP folder: {from_vasp_folder}')
-                incar_params = (
-                    local_folder_overrides.get('base', {}).get('vasp', {}).get('parameters', {}).get('incar', {})
-                )
+                incar_params = _extract_incar_overrides(local_folder_overrides)
                 click.echo(f'INCAR parameters loaded: {len(incar_params)}')
             click.echo(f'Preset: {preset}')
             if resolved_protocol:
@@ -231,10 +230,12 @@ def launch_workchain(
         # Launch the calculation
         handle_calculation_submission(upd, run_directly, group, alias=alias)
 
-    except Exception as e:
-        raise e
-        click.echo(f'Error: {e}', err=True)
-        raise click.Abort()
+    except click.ClickException:
+        raise
+    except click.Abort:
+        raise
+    except Exception as exception:
+        raise click.ClickException(str(exception)) from exception
 
 
 @cmd_aiida_vasp.command('presets')
@@ -391,11 +392,9 @@ def pretty_print_builder(builder) -> str:
     from aiida import orm
     from aiida.engine.processes.builder import ProcessBuilderNamespace
 
-    from aiida_vasp.common.builder_updater import builder_to_dict
-
     def sanitize(value):
         if isinstance(value, ProcessBuilderNamespace):
-            return sanitize(builder_to_dict(value))
+            return sanitize(_builder_to_dict(value))
         if isinstance(value, orm.Dict):
             return sanitize(value.get_dict())
         if isinstance(value, orm.List):
@@ -414,7 +413,7 @@ def pretty_print_builder(builder) -> str:
 
     return (
         f'Process class: {builder._process_class.__name__}\n'
-        f'Inputs:\n{yaml.safe_dump(sanitize(builder_to_dict(builder)), sort_keys=False)}'
+        f'Inputs:\n{yaml.safe_dump(sanitize(_builder_to_dict(builder)), sort_keys=False)}'
     )
 
 
@@ -496,9 +495,21 @@ def load_inputs_from_vasp_folder(folder_path):
     overrides_map['band'] = band_override
 
     # VaspConvergeWorkChain
-    conv_override = {'parameters': {'incar': incar_dict, 'potential': potcars}}
+    conv_override = {'parameters': {'incar': incar_dict}, 'potential': potcars}
     if kpoints_node is not None:
         conv_override['kpoints'] = kpoints_node
-    overrides_map['conv'] = conv_override
+    overrides_map['converge'] = conv_override
 
     return structure_node, overrides_map
+
+
+def _extract_incar_overrides(overrides: dict) -> dict:
+    """Extract INCAR overrides from workchain-specific override structures."""
+    if not overrides:
+        return {}
+    if 'parameters' in overrides:
+        return overrides.get('parameters', {}).get('incar', {})
+    for key in ('vasp', 'scf'):
+        if key in overrides:
+            return overrides.get(key, {}).get('parameters', {}).get('incar', {})
+    return {}

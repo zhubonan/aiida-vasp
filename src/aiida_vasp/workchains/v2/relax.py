@@ -46,8 +46,6 @@ from aiida_vasp.utils.extended_dicts import update_nested_dict, update_nested_di
 from aiida_vasp.utils.opthold import RelaxOptions
 from aiida_vasp.utils.workchains import compose_exit_code
 
-from .mixins import WithBuilderUpdater
-
 __version__ = '0.5.0'
 
 # Change log
@@ -55,7 +53,7 @@ __version__ = '0.5.0'
 # 0.5.0 update the logic of convergence checking. Cell comparsion is always done using the input/output structures.
 
 
-class VaspRelaxWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
+class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
     """Structure relaxation workchain."""
 
     _verbose: bool = True
@@ -994,7 +992,7 @@ def detect_tetrahedral_method(input_dict: dict) -> bool:
     return False
 
 
-class VaspMultiStageRelaxWorkChain(WorkChain, WithBuilderUpdater):
+class VaspMultiStageRelaxWorkChain(WorkChain):
     """
     Relxation with multiple stages
 

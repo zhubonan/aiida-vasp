@@ -31,7 +31,6 @@ from aiida_vasp.utils.extended_dicts import update_nested_dict, update_nested_di
 from aiida_vasp.utils.kmesh import get_ir_kpoints_data
 from aiida_vasp.utils.opthold import BandOptions
 
-from .mixins import WithBuilderUpdater
 from .relax import VaspRelaxWorkChain
 from .vasp import VaspWorkChain
 
@@ -434,7 +433,7 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
                 self.report(f'cleaned remote folders of calculations: {" ".join(map(str, cleaned_calcs))}')
 
 
-class VaspBandsWorkChain(WorkChain, WithBuilderUpdater, ProtocolMixin):
+class VaspBandsWorkChain(WorkChain, ProtocolMixin):
     """
     Workchain for running bands calculations.
 

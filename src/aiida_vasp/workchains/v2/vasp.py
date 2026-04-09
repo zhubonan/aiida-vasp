@@ -77,12 +77,10 @@ from aiida_vasp.protocols import ProtocolMixin, recursive_merge
 from aiida_vasp.utils.ldau import get_ldau_keys
 from aiida_vasp.utils.workchains import compose_exit_code, prepare_process_inputs, site_magnetization_to_magmom
 
-from .mixins import WithBuilderUpdater
-
 # pylint: disable=no-member
 
 
-class VaspWorkChain(BaseRestartWorkChain, WithBuilderUpdater, ProtocolMixin):
+class VaspWorkChain(BaseRestartWorkChain, ProtocolMixin):
     """
     The VASP workchain.
 
