@@ -397,6 +397,9 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
             if not bands.is_finished_ok:
                 self.report(f'Bands calculation finished with error, exit_status: {bands}')
                 exit_code = self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
+            elif 'bands' not in bands.outputs:
+                self.report(f'Bands calculation {bands} finished without a `bands` output.')
+                exit_code = self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
             else:
                 self.out(
                     'band_structure',
@@ -407,6 +410,9 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
             dos = self.ctx.dos_workchain
             if not dos.is_finished_ok:
                 self.report(f'DOS calculation finished with error, exit_status: {dos.exit_status}')
+                exit_code = self.exit_codes.ERROR_SUB_PROC_DOS_FAILED
+            elif 'dos' not in dos.outputs:
+                self.report(f'DOS calculation {dos} finished without a `dos` output.')
                 exit_code = self.exit_codes.ERROR_SUB_PROC_DOS_FAILED
             else:
                 self.out('dos', dos.outputs.dos)

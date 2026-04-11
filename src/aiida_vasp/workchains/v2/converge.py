@@ -298,7 +298,7 @@ class VaspConvergenceWorkChain(WorkChain, ProtocolMixin):
 
                 # Setup the energy key from the first workchain
                 if not energy_key:
-                    energy_key = next(iter(workchain.outputs.misc.get_dict()['total_energies'].values()))
+                    energy_key = next(iter(workchain.outputs.misc.get_dict()['total_energies'].keys()))
 
                 spacing = float(workchain.inputs.kpoints_spacing)
                 kspacing_data[spacing] = collect_data(workchain, energy_key)

@@ -29,6 +29,7 @@ def cmd_aiida_vasp() -> None:
 from .immigrant import import_calc
 from .launch import launch_workchain
 from .potcar import potcar
+from .setup import setup_local
 from .tools import export
 
-__all__ = ['cmd_aiida_vasp', 'export', 'import_calc', 'launch_workchain', 'potcar']
+__all__ = ['cmd_aiida_vasp', 'export', 'import_calc', 'launch_workchain', 'potcar', 'setup_local']

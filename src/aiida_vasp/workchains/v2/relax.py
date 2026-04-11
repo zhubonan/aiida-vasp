@@ -195,22 +195,42 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
         if relax_settings:
             overrides['relax_settings'] = recursive_merge(overrides.get('relax_settings', {}), relax_settings)
 
-        inputs = cls.get_protocol_inputs(protocol, overrides)
+        has_pmg = False
+        if protocol:
+            try:
+                from aiida_vasp.protocols.pmg import PymatgenInputAdaptor  # noqa: PLC0415
+            except ImportError:
+                PymatgenInputAdaptor = None
+            else:
+                has_pmg = protocol in PymatgenInputAdaptor.KNOWN_SETS
+
+        if has_pmg:
+            vasp_overrides = overrides.get(
+                'vasp',
+                {key: value for key, value in overrides.items() if key not in {'relax_settings', 'static'}},
+            )
+            inputs = {'vasp': vasp_overrides, 'relax_settings': overrides.get('relax_settings', {})}
+            if 'static' in overrides:
+                inputs['static'] = overrides['static']
+        else:
+            inputs = cls.get_protocol_inputs(protocol, overrides)
 
         base_builder = cls._base_workchain.get_builder_from_protocol(
             code=code,
-            protocol=inputs.get('vasp', {}).get('protocol'),
+            protocol=protocol if has_pmg else inputs.get('vasp', {}).get('protocol'),
             structure=structure,
             overrides=inputs.get('vasp', {}),
             options=options,
             **kwargs,
         )
-        static_builder = deepcopy(base_builder)
         static_overrides = inputs.get('static', {})
+        static_builder = None
         if static_overrides:
             static_builder = cls._base_workchain.get_builder_from_protocol(
                 code=code,
-                protocol=static_overrides.get('protocol', inputs.get('vasp', {}).get('protocol')),
+                protocol=protocol
+                if has_pmg
+                else static_overrides.get('protocol', inputs.get('vasp', {}).get('protocol')),
                 structure=structure,
                 overrides=static_overrides,
                 options=options,
@@ -218,10 +238,11 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
             )
         # Structure is defined at the top level
         base_builder.pop('structure')
-        static_builder.pop('structure')
         builder = cls.get_builder()
         builder.vasp = base_builder
-        builder.static = static_builder
+        if static_builder is not None:
+            static_builder.pop('structure')
+            builder.static = static_builder
         builder.structure = structure
         builder.relax_settings = inputs.get('relax_settings', {})
         builder.static_calc_settings = inputs.get('static_calc_settings', {})

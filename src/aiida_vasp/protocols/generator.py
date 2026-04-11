@@ -1217,12 +1217,18 @@ class VaspRelaxInputGenerator(BaseInputGenerator):
         return RelaxSettingsGenerator(self, self, '')
 
     def static(self) -> StaticNamespaceGenerator:
+        if self.builder is not None and self.builder.get('static') is None:
+            self.builder.static = {}
         return StaticNamespaceGenerator(self, self, 'static')
 
     def set_relax_settings(self, value=None, **kwargs):
         """Set the `relax_settings` port"""
         self._set_generic_port_by_dict('relax_settings', ports=['relax_settings'], value=value, **kwargs)
         return self
+
+    def set_settings(self, *args, **kwargs):
+        """Set settings for the main relaxation VASP branch only."""
+        return super().set_settings(*args, ports=['vasp.settings'], update_all=False, **kwargs)
 
     def build(self, structure, code=None, protocol=None, overrides=None, **kwargs):
         builder = super().build(structure=structure, code=code, protocol=protocol, overrides=overrides, **kwargs)

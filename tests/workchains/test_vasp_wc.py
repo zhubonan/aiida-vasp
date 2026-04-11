@@ -17,6 +17,8 @@ from aiida.engine import run
 from aiida.plugins import WorkflowFactory
 from aiida.plugins.factories import DataFactory
 
+from aiida_vasp.workchains.v2.bands import VaspNscfWorkChain
+from aiida_vasp.workchains.v2.converge import VaspConvergenceWorkChain
 from aiida_vasp.workchains.v2.vasp import VaspWorkChain
 
 
@@ -265,6 +267,81 @@ def test_handler_ionic_conv_enhanced_formats_exit_code_message():
 
     assert report.exit_code.status == VaspWorkChain.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.status
     assert '1e-5 /atom' in report.exit_code.message
+
+
+def test_nscf_inspect_bands_dos_handles_missing_outputs():
+    """Finished child workchains without parsed outputs should fail cleanly."""
+
+    class FakeNode:
+        def __init__(self, *, outputs=None, inputs=None, is_finished_ok=True, exit_status=0):
+            self.outputs = AttributeDict(outputs or {})
+            self.inputs = AttributeDict(inputs or {})
+            self.is_finished_ok = is_finished_ok
+            self.exit_status = exit_status
+
+        def __repr__(self):
+            return '<FakeNode>'
+
+    workchain = object.__new__(VaspNscfWorkChain)
+    object.__setattr__(workchain, '_context', AttributeDict())
+    workchain.ctx.bands_workchain = FakeNode(inputs={'kpoints': object()}, outputs={})
+    workchain.ctx.dos_workchain = FakeNode(outputs={})
+    workchain.report = lambda *args, **kwargs: None
+    workchain.out = lambda *args, **kwargs: None
+
+    exit_code = workchain.inspect_bands_dos()
+
+    assert exit_code == workchain.exit_codes.ERROR_SUB_PROC_DOS_FAILED
+
+
+def test_converge_analyse_handles_kspacing_only_branch(aiida_profile):
+    """The k-spacing-only analysis path should select the total-energy key, not a value."""
+
+    class FakeCalled:
+        def __init__(self, mesh):
+            kpoints = orm.KpointsData()
+            kpoints.set_kpoints_mesh(mesh)
+            self.inputs = AttributeDict({'kpoints': kpoints})
+
+    class FakeNode:
+        def __init__(self, energy, spacing, mesh):
+            self.exit_status = 0
+            self.outputs = AttributeDict(
+                {
+                    'misc': orm.Dict(
+                        dict={
+                            'forces': [[0.0, 0.0, 0.0]],
+                            'stress': [[0.0, 0.0, 0.0]],
+                            'total_energies': {'energy_extrapolated': energy},
+                        }
+                    )
+                }
+            )
+            self.inputs = AttributeDict(
+                {
+                    'kpoints_spacing': orm.Float(spacing),
+                    'parameters': orm.Dict(dict={'incar': {'encut': 520}}),
+                }
+            )
+            self.called = [FakeCalled(mesh)]
+
+    captured = {}
+    workchain = object.__new__(VaspConvergenceWorkChain)
+    object.__setattr__(workchain, '_context', AttributeDict())
+    workchain.ctx.kpoints_conv_workchains = [
+        FakeNode(-10.0, 0.12, (4, 4, 4)),
+        FakeNode(-10.5, 0.08, (6, 6, 6)),
+    ]
+    workchain.report = lambda *args, **kwargs: None
+    workchain.out = lambda name, value: captured.__setitem__(name, value)
+
+    exit_code = workchain.analyse()
+
+    assert exit_code is None
+    assert 'kpoints_conv_data' in captured
+    data = captured['kpoints_conv_data'].get_dict()
+    assert data['energy'] == [-10.0, -10.5]
+    assert data['kpoints_spacing'] == [0.12, 0.08]
 
 
 @pytest.mark.skip(reason='This test is not working yet')

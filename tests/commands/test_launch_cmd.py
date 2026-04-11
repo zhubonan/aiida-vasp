@@ -3,6 +3,8 @@ Unit tests for aiida-vasp launch command family.
 """
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -509,6 +511,110 @@ def test_launch_with_resources(cmd_params, run_env):
     assert 'tot_num_mpiprocs: 16' in result.output
     assert 'max_wallclock_seconds: 3600' in result.output
     assert 'DRY RUN' in result.output
+
+
+def test_launch_with_pymatgen_pmg_set_vasp(cmd_params, run_env, monkeypatch):
+    """Pymatgen sets should be usable through the launch CLI for VaspWorkChain."""
+
+    class FakeAdaptor:
+        KNOWN_SETS = {'FakeStaticSet'}
+        last_pmg_kwargs = None
+
+        def __init__(self, protocol, incar_overrides=None, pmg_kwargs=None):
+            self.protocol = protocol
+            self.incar_overrides = incar_overrides or {}
+            self.pmg_kwargs = pmg_kwargs or {}
+            type(self).last_pmg_kwargs = self.pmg_kwargs
+
+        def get_inputs(self, structure, is_workchain=True, overrides=None):
+            return {
+                'potential_family': 'PBE.54',
+                'potential_mapping': {'Si': 'Si'},
+                'parameters': {'incar': {'encut': 520}},
+                'calc': {'metadata': {'options': {'resources': {'num_machines': 1}}}},
+                'meta_parameters': {'ediff_per_atom': 1.0e-6},
+                'kpoints_spacing': 0.05,
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        'aiida_vasp.protocols.pmg',
+        types.SimpleNamespace(PymatgenInputAdaptor=FakeAdaptor),
+    )
+
+    result = run_cmd(
+        command='launch',
+        args=[
+            '--structure',
+            cmd_params.STRUCTURE_FILE,
+            '--code',
+            f'{run_env.code.pk}',
+            '--label',
+            'test-pmg-vasp',
+            '--pmg-set',
+            'FakeStaticSet',
+            '--pmg-kwargs',
+            '{"user_incar_settings": {"ISMEAR": 0}}',
+            '--dryrun',
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert 'Pymatgen set: FakeStaticSet' in result.output
+    assert FakeAdaptor.last_pmg_kwargs == {'user_incar_settings': {'ISMEAR': 0}}
+
+
+def test_launch_with_pymatgen_pmg_set_relax(cmd_params, run_env, monkeypatch):
+    """Pymatgen sets should be usable through the launch CLI for VaspRelaxWorkChain."""
+
+    class FakeAdaptor:
+        KNOWN_SETS = {'FakeRelaxSet'}
+        last_pmg_kwargs = None
+
+        def __init__(self, protocol, incar_overrides=None, pmg_kwargs=None):
+            self.protocol = protocol
+            self.incar_overrides = incar_overrides or {}
+            self.pmg_kwargs = pmg_kwargs or {}
+            type(self).last_pmg_kwargs = self.pmg_kwargs
+
+        def get_inputs(self, structure, is_workchain=True, overrides=None):
+            return {
+                'potential_family': 'PBE.54',
+                'potential_mapping': {'Si': 'Si'},
+                'parameters': {'incar': {'encut': 520, 'nsw': 99, 'ibrion': 2, 'isif': 3}},
+                'calc': {'metadata': {'options': {'resources': {'num_machines': 1}}}},
+                'meta_parameters': {'ediff_per_atom': 1.0e-6},
+                'kpoints_spacing': 0.05,
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        'aiida_vasp.protocols.pmg',
+        types.SimpleNamespace(PymatgenInputAdaptor=FakeAdaptor),
+    )
+
+    result = run_cmd(
+        command='launch',
+        args=[
+            '--structure',
+            cmd_params.STRUCTURE_FILE,
+            '--code',
+            f'{run_env.code.pk}',
+            '--label',
+            'test-pmg-relax',
+            '--workchain-type',
+            'relax',
+            '--pmg-set',
+            'FakeRelaxSet',
+            '--pmg-kwargs',
+            '{"sort_structure": false}',
+            '--dryrun',
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert 'Pymatgen set: FakeRelaxSet' in result.output
+    assert FakeAdaptor.last_pmg_kwargs == {'sort_structure': False}
 
 
 def test_launch_band_workchain_settings(cmd_params, run_env):

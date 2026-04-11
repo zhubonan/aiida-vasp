@@ -1,0 +1,61 @@
+============================= test session starts ==============================
+platform linux -- Python 3.7.7, pytest-6.2.2, py-1.10.0, pluggy-0.13.1
+benchmark: 3.2.3 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)
+Matplotlib: 3.2.1
+Freetype: 2.10.1
+rootdir: /home/bonan/aiida_envs/aiida-1.0-dev/aiida-vasp, configfile: pytest.ini, testpaths: aiida_vasp
+plugins: asyncio-0.14.0, benchmark-3.2.3, cov-2.8.1, forked-1.1.3, mpl-0.11, rerunfailures-9.1.1, timeout-1.3.4, xdist-1.31.0
+collected 172 items
+
+aiida_vasp/assistant/tests/test_parameters.py ........................   [ 13%]
+aiida_vasp/calcs/tests/test_base.py .                                    [ 14%]
+aiida_vasp/calcs/tests/test_immigrant.py ....                            [ 16%]
+aiida_vasp/calcs/tests/test_vasp.py ..............                       [ 25%]
+aiida_vasp/calcs/tests/test_vasp2w90.py ...                              [ 26%]
+aiida_vasp/commands/tests/test_mock_vasp.py .                            [ 27%]
+aiida_vasp/commands/tests/test_potcar_cmd.py ...........                 [ 33%]
+aiida_vasp/data/tests/test_potcar.py ................                    [ 43%]
+aiida_vasp/data/tests/test_potcar_walker.py .                            [ 43%]
+aiida_vasp/parsers/file_parsers/tests/test_base_file_parser.py .         [ 44%]
+aiida_vasp/parsers/file_parsers/tests/test_chgcar_parser.py .            [ 44%]
+aiida_vasp/parsers/file_parsers/tests/test_doscar_parser.py ...          [ 46%]
+aiida_vasp/parsers/file_parsers/tests/test_eigenval_parser.py .          [ 47%]
+aiida_vasp/parsers/file_parsers/tests/test_incar_parser.py ....          [ 49%]
+aiida_vasp/parsers/file_parsers/tests/test_kpoints_parser.py ....        [ 51%]
+aiida_vasp/parsers/file_parsers/tests/test_magnetization_parser.py ..    [ 52%]
+aiida_vasp/parsers/file_parsers/tests/test_outcar_parser.py .            [ 53%]
+aiida_vasp/parsers/file_parsers/tests/test_poscar_parser.py .......      [ 57%]
+aiida_vasp/parsers/file_parsers/tests/test_potcar_parser.py .......      [ 61%]
+aiida_vasp/parsers/file_parsers/tests/test_stream_parser.py .            [ 62%]
+aiida_vasp/parsers/file_parsers/tests/test_vasprun_parser.py ........... [ 68%]
+......................                                                   [ 81%]
+aiida_vasp/parsers/file_parsers/tests/test_wavecar_parser.py .           [ 81%]
+aiida_vasp/parsers/tests/test_base_parser.py .                           [ 82%]
+aiida_vasp/parsers/tests/test_parser_settings.py .                       [ 83%]
+aiida_vasp/parsers/tests/test_vasp_parser.py ...............             [ 91%]
+aiida_vasp/utils/tests/test_aiida_utils.py ...                           [ 93%]
+aiida_vasp/utils/tests/test_band_info.py ..                              [ 94%]
+aiida_vasp/utils/tests/test_extended_dicts.py ..                         [ 95%]
+aiida_vasp/workchains/tests/test_bands_wc.py .                           [ 96%]
+aiida_vasp/workchains/tests/test_converge_wc.py ..                       [ 97%]
+aiida_vasp/workchains/tests/test_relax_wc.py ..                          [ 98%]
+aiida_vasp/workchains/tests/test_vasp_wc.py ..                           [100%]
+
+=============================== warnings summary ===============================
+aiida_vasp/parsers/file_parsers/tests/test_vasprun_parser.py::test_nan_inf_cleaning
+  /home/bonan/aiida_envs/aiida-1.0-dev/aiida-vasp/aiida_vasp/parsers/node_composer.py:205: UserWarning:
+
+  Key <d> has value <inf> replaced by <inf>
+
+aiida_vasp/parsers/file_parsers/tests/test_vasprun_parser.py::test_nan_inf_cleaning
+  /home/bonan/aiida_envs/aiida-1.0-dev/aiida-vasp/aiida_vasp/parsers/node_composer.py:205: UserWarning:
+
+  Key <e> has value <nan> replaced by <nan>
+
+aiida_vasp/parsers/file_parsers/tests/test_vasprun_parser.py::test_nan_inf_cleaning
+  /home/bonan/aiida_envs/aiida-1.0-dev/aiida-vasp/aiida_vasp/parsers/node_composer.py:205: UserWarning:
+
+  Key <g> has value <inf> replaced by <inf>
+
+-- Docs: https://docs.pytest.org/en/stable/warnings.html
+================= 172 passed, 3 warnings in 435.76s (0:07:15) ==================

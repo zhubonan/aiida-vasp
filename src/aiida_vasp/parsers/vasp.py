@@ -481,9 +481,9 @@ class VaspParser(Parser):
         """Compose the `dos` node"""
         arrays_dict = {}
         if 'vasprun.xml' in quantities_each:
-            gather_quantities(quantities_each, 'dos', arrays_dict, ['dos'], flatten_dict=True)
+            gather_quantities(quantities_each, 'vasprun.xml', arrays_dict, ['dos'], flatten_dict=True)
         if arrays_dict:
-            node = orm.ArrayData(arrays_dict['dos'])
+            node = orm.ArrayData(arrays_dict)
             return node
 
     def _check_vasp_errors(self, parser_notifications: dict[str, Any]) -> ExitCode | None:

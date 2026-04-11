@@ -405,6 +405,37 @@ def test_basic(parser_with_retrieved):
     )
 
 
+def test_parser_emits_dos_node_from_vasprun(parser_with_retrieved):
+    """Ensure the DOS node is composed from the parsed vasprun.xml DOS quantity."""
+    parser, _ = parser_with_retrieved(
+        'basic_run',
+        {
+            'parser_settings': {
+                'critical_objects': [],
+                'check_completeness': False,
+                'required_quantity': [],
+                'include_node': ['dos'],
+                'check_errors': False,
+            }
+        },
+    )
+
+    assert 'dos' in parser.outputs
+    dos = parser.outputs['dos']
+    assert 'dos_energy' in dos.get_arraynames()
+    assert 'dos_tdos' in dos.get_arraynames()
+    assert 'dos_pdos' in dos.get_arraynames()
+
+    energy = dos.get_array('dos_energy')
+    tdos = dos.get_array('dos_tdos')
+    pdos = dos.get_array('dos_pdos')
+
+    assert energy.ndim == 1
+    assert tdos.ndim >= 1
+    assert pdos.ndim >= 1
+    assert energy.size > 0
+
+
 def test_stream(parser_with_retrieved):
     """Test the functionality of the stream parser."""
     parser, _ = parser_with_retrieved(

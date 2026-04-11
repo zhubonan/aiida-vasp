@@ -37,6 +37,25 @@ FUNCTIONAL_CHOICES = [
     'Perdew_Zunger81',
 ]
 
+FUNCTIONAL_FAMILY_LABELS = {
+    'PBE': 'PBE',
+    'PBE_52': 'PBE.52',
+    'PBE_52_W_HASH': 'PBE.52',
+    'PBE_54': 'PBE.54',
+    'PBE_54_W_HASH': 'PBE.54',
+    'PBE_64': 'PBE.64',
+    'LDA': 'LDA',
+    'LDA_52': 'LDA.52',
+    'LDA_52_W_HASH': 'LDA.52',
+    'LDA_54': 'LDA.54',
+    'LDA_54_W_HASH': 'LDA.54',
+    'LDA_64': 'LDA.64',
+    'PW91': 'PW91',
+    'LDA_US': 'LDA.US',
+    'PW91_US': 'PW91.US',
+    'Perdew_Zunger81': 'Perdew.Zunger81',
+}
+
 
 # @VERDI_DATA.group('vasp.potcar')
 @cmd_aiida_vasp.group('potcar')
@@ -61,6 +80,57 @@ def try_grab_description(ctx, param, value):
             return potcar_data_cls.get_potcar_group(group_name).description
         raise click.MissingParameter('A new group must be given a description.', param=param)
     return value
+
+
+def _strip_archive_suffix(name: str) -> str:
+    """Strip common archive suffixes from a filename."""
+    for suffix in ('.tar.gz', '.tgz', '.tar.bz2', '.tar.xz', '.tar', '.zip'):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _infer_family_name(
+    raw_name: str | None = None, path: str | None = None, functional: str | None = None
+) -> str | None:
+    """Infer a canonical POTCAR family label."""
+    candidate = raw_name
+    if candidate is None and functional is not None:
+        return FUNCTIONAL_FAMILY_LABELS.get(functional, functional)
+    if candidate is None and path is not None:
+        candidate = _strip_archive_suffix(Path(path).name)
+    if candidate is None:
+        return None
+
+    candidate = candidate.strip()
+    if candidate.startswith('potpaw_'):
+        candidate = candidate[len('potpaw_') :]
+    return FUNCTIONAL_FAMILY_LABELS.get(candidate, candidate)
+
+
+def _default_family_description(name: str) -> str:
+    """Build the default family description."""
+    return f'VASP PAW dataset version {name}'
+
+
+def _resolve_family_metadata(
+    name: str | None, description: str | None, *, path: str | None = None, functional: str | None = None
+):
+    """Resolve final family name and description."""
+    from aiida_vasp.data.potcar import PotcarData
+
+    resolved_name = _infer_family_name(name, path=path, functional=functional)
+    if not resolved_name:
+        raise click.MissingParameter('A family name could not be inferred. Please provide --name explicitly.')
+
+    if description:
+        return resolved_name, description
+
+    group = PotcarData.get_potcar_group(resolved_name)
+    if group is not None:
+        return resolved_name, group.description
+
+    return resolved_name, _default_family_description(resolved_name)
 
 
 def detect_old_style_groups() -> None:
@@ -96,8 +166,8 @@ def detect_old_style_groups() -> None:
     'You can supply the archive that you downloaded from the VASP server. '
     'The path does not need to be specified, if that is the case, the current path is used.'
 )
-@options.FAMILY_NAME()
-@options.DESCRIPTION(help='A description for the family.', callback=try_grab_description)
+@options.FAMILY_NAME(required=False)
+@options.DESCRIPTION(help='A description for the family.')
 @click.option(
     '--stop-if-existing', is_flag=True, help='An option to abort when encountering a previously uploaded POTCAR file.'
 )
@@ -108,6 +178,7 @@ def uploadfamily(path, name, description, stop_if_existing, dry_run):
 
     from aiida_vasp.data.potcar import PotcarData
 
+    name, description = _resolve_family_metadata(name, description, path=path)
     potcar_data_cls = PotcarData
     with cli_spinner():
         num_found, num_added, num_uploaded = potcar_data_cls.upload_potcar_family(
@@ -137,6 +208,36 @@ def listsymbols(family_name):
     duplicated, _ = group.get_duplicated_symbols()
     if duplicated:
         echo.echo_warning(f'Duplicated symbols found in group {family_name}: {duplicated}')
+
+
+@potcar.command()
+@click.argument('family_name')
+@click.argument('symbols', nargs=-1)
+@click.option('-o', '--output', default='POTCAR', type=click.Path(dir_okay=False), help='Output POTCAR path.')
+@click.option('--force', is_flag=True, help='Overwrite the output file if it already exists.')
+@with_dbenv()
+def generate(family_name, symbols, output, force):
+    """Generate a concatenated POTCAR file from a family and ordered symbols."""
+    from aiida.common.exceptions import NotExistent
+
+    from aiida_vasp.data.potcar import PotcarData
+    from aiida_vasp.parsers.content_parsers.potcar import MultiPotcarIo
+
+    if not symbols:
+        raise click.ClickException('At least one POTCAR symbol must be specified.')
+
+    output_path = Path(output)
+    if output_path.exists() and not force:
+        raise click.ClickException(f'Output file already exists: {output_path}. Use --force to overwrite it.')
+
+    mapping = {symbol: symbol for symbol in symbols}
+    try:
+        potcars = PotcarData.get_potcars_dict(list(symbols), family_name=family_name, mapping=mapping)
+    except NotExistent as exception:
+        raise click.ClickException(str(exception)) from exception
+
+    MultiPotcarIo([potcars[symbol] for symbol in symbols]).write(output_path)
+    click.echo(f'Generated {output_path} with {len(symbols)} POTCAR entries from family {family_name}.')
 
 
 @potcar.command()
@@ -289,8 +390,8 @@ def fix_inconsistent_symbols(family_name, dryrun):
     type=click.Choice(FUNCTIONAL_CHOICES),
     default='PBE',
 )
-@options.FAMILY_NAME()
-@options.DESCRIPTION(help='A description for the family.', callback=try_grab_description)
+@options.FAMILY_NAME(required=False)
+@options.DESCRIPTION(help='A description for the family.')
 @click.option(
     '--stop-if-existing', is_flag=True, help='An option to abort when encountering a previously uploaded POTCAR file.'
 )
@@ -308,6 +409,7 @@ def upload_from_pymatgen(functional, name, description, stop_if_existing, dry_ru
     from aiida_vasp.data.potcar import PotcarData
     from aiida_vasp.utils.pmg import convert_pymatgen_potcar_folder, temporary_folder
 
+    name, description = _resolve_family_metadata(name, description, functional=functional)
     funcdir = PotcarSingle.functional_dir[functional]
     pmg_vasp_psp_dir = SETTINGS.get('PMG_VASP_PSP_DIR')
     if pmg_vasp_psp_dir is None:

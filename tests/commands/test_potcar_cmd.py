@@ -3,6 +3,7 @@ Unit tests for vasp.potcar command family.
 """
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -88,6 +89,44 @@ def test_uploadfamily_inworkdir(aiida_profile_clean, cmd_params):
     os.chdir(str(old_work_dir))
 
     assert str(old_work_dir) == str(Path().cwd())
+
+
+def test_uploadfamily_infers_name_and_description(aiida_profile_clean, temp_pot_folder, tmp_path):
+    """Known VASP family folder names should infer the canonical label and description."""
+
+    target = tmp_path / 'potpaw_PBE.64'
+    shutil.copytree(temp_pot_folder, target)
+
+    result = run_cmd('uploadfamily', [f'--path={target}'])
+
+    assert result.exit_code == 0
+    group = PotcarData.get_potcar_group('PBE.64')
+    assert group is not None
+    assert group.description == 'VASP PAW dataset version PBE.64'
+
+
+def test_generate_potcar(aiida_profile_clean, upload_potcar, potcar_family_name, tmp_path):
+    """Generate a concatenated POTCAR from a family and ordered symbols."""
+    output = tmp_path / 'POTCAR'
+
+    result = run_cmd('generate', [potcar_family_name, 'In_d', 'As', 'In_d', '--output', str(output)])
+
+    assert result.exit_code == 0
+    assert output.exists()
+    assert output.read_text(encoding='utf8').count('End of Dataset') == 3
+    assert f'Generated {output}' in result.output
+
+
+def test_generate_potcar_refuses_overwrite(aiida_profile_clean, upload_potcar, potcar_family_name, tmp_path):
+    """Existing output files should not be overwritten unless --force is supplied."""
+    output = tmp_path / 'POTCAR'
+    output.write_text('existing', encoding='utf8')
+
+    result = run_cmd('generate', [potcar_family_name, 'In_d', 'As', '--output', str(output)])
+
+    assert result.exit_code != 0
+    assert 'Use --force to overwrite it' in result.output
+    assert output.read_text(encoding='utf8') == 'existing'
 
 
 def test_uploadfamily_again(aiida_profile_clean, upload_potcar, cmd_params):

@@ -142,8 +142,70 @@ def test_relax_protocol(basic_env, mock_vasp, vasp_structure, potcar_family_name
 
     assert builder.structure == vasp_structure
     assert builder.vasp.code == mock_vasp
+    assert builder.static.get('code') is None
+    assert builder.static.get('parameters') is None
+
+
+@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+def test_relax_protocol_pmg(monkeypatch, basic_env, mock_vasp, vasp_structure):
+    """Known pymatgen-style protocols should propagate through the relax builder."""
+
+    class FakeAdaptor:
+        KNOWN_SETS = {'FakeRelaxSet'}
+
+        def __init__(self, protocol, incar_overrides=None, pmg_kwargs=None):
+            self.protocol = protocol
+            self.incar_overrides = incar_overrides or {}
+            self.pmg_kwargs = pmg_kwargs or {}
+
+        def get_inputs(self, structure, is_workchain=True, overrides=None):
+            return {
+                'potential_family': 'PBE.54',
+                'potential_mapping': {'In': 'In_d', 'As': 'As', 'In_d': 'In_d'},
+                'parameters': {'incar': {'encut': 520, 'nsw': 99, 'ibrion': 2, 'isif': 3}},
+                'calc': {'metadata': {'options': {'resources': {'num_machines': 1}}}},
+                'meta_parameters': {'ediff_per_atom': 1.0e-6},
+                'kpoints_spacing': 0.05,
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        'aiida_vasp.protocols.pmg',
+        types.SimpleNamespace(PymatgenInputAdaptor=FakeAdaptor),
+    )
+
+    builder = VaspRelaxWorkChain.get_builder_from_protocol(
+        code=mock_vasp, structure=vasp_structure, protocol='FakeRelaxSet'
+    )
+
+    assert builder.structure == vasp_structure
+    assert builder.vasp.code == mock_vasp
+    assert builder.vasp.parameters['incar']['encut'] == 520
     assert builder.vasp.parameters is not None
     assert builder.relax_settings['algo']
+    assert builder.static.get('code') is None
+    assert builder.static.get('parameters') is None
+
+
+@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+def test_relax_protocol_with_static_override(basic_env, mock_vasp, vasp_structure, potcar_family_name):
+    """Static namespace should only be populated when explicitly overridden."""
+
+    builder = VaspRelaxWorkChain.get_builder_from_protocol(
+        code=mock_vasp,
+        structure=vasp_structure,
+        overrides={
+            'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}},
+            'static': {
+                'potential_family': potcar_family_name,
+                'potential_mapping': {'In_d': 'In_d'},
+                'parameters': {'incar': {'ismear': -5}},
+            },
+        },
+    )
+
+    assert builder.static.code == mock_vasp
+    assert builder.static.parameters['incar']['ismear'] == -5
 
 
 @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)

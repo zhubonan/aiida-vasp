@@ -307,6 +307,40 @@ class TestComposableInputGenerators:
 
         assert gen.builder.vasp.parameters['incar']['encut'] == 650
         assert gen.builder.relax_settings['force_cutoff'] == 0.02
+        assert gen.builder.static.get('code') is None
+        assert gen.builder.static.get('parameters') is None
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_relax_static_generator_lazily_initializes_namespace(
+        self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure
+    ):
+        gen = VaspRelaxInputGenerator()
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+        )
+
+        assert gen.builder.static.get('code') is None
+        assert gen.builder.static.get('parameters') is None
+
+        gen.static().set_incar(ismear=-5)
+
+        assert gen.builder.static.parameters['incar']['ismear'] == -5
+
+    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
+    def test_relax_build_does_not_populate_static_settings(
+        self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure
+    ):
+        gen = VaspRelaxInputGenerator(protocol='balanced')
+        gen.build(
+            structure=vasp_structure,
+            code='mock-vasp-loose@localhost',
+            overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
+        )
+
+        assert gen.builder.vasp.settings is not None
+        assert gen.builder.static.get('settings') is None
 
     @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
     def test_nscf_child_generators(

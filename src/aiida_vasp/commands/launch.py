@@ -11,6 +11,7 @@ from . import cmd_aiida_vasp
 @click.option('--preset', '-p', default='default', help='Preset to use for the calculation.')
 @click.option('--structure', '-s', help='Path to a structure file to use for the calculation or a pk/uuid')
 @click.option('--protocol', '-pt', default=None, help='The protocol to use for the calculation.')
+@click.option('--pmg-set', default=None, help='Pymatgen set class to use for vasp/relax launches.')
 @click.option('--code', '-c', required=True, help='Code to use for the calculation.')
 @click.option(
     '--max-wallclock-seconds', '-m', type=int, default=None, help='Maximum wallclock time for the calculation.'
@@ -30,6 +31,7 @@ from . import cmd_aiida_vasp
 @click.option(
     '--incar-overrides', help='Additional incar overrides to be passed as set_incar method of the InputGenerator.'
 )
+@click.option('--pmg-kwargs', default=None, help='Additional keyword arguments for the selected pymatgen input set.')
 @click.option(
     '--band-settings', '-bs', default=None, help='Explicit settings or a path to a file containing band settings'
 )
@@ -64,6 +66,7 @@ from . import cmd_aiida_vasp
 def launch_workchain(
     preset,
     protocol,
+    pmg_set,
     code,
     max_wallclock_seconds,
     num_machines,
@@ -74,6 +77,7 @@ def launch_workchain(
     structure,
     from_vasp_folder,
     incar_overrides,
+    pmg_kwargs,
     group,
     label,
     description,
@@ -120,6 +124,21 @@ def launch_workchain(
     }
     local_folder_overrides = {}
     try:
+        if pmg_set and workchain_type.lower() not in {'vasp', 'relax'}:
+            raise click.ClickException('--pmg-set is currently only supported with --workchain-type vasp or relax.')
+
+        if pmg_set:
+            try:
+                from aiida_vasp.protocols.pmg import PymatgenInputAdaptor
+            except ImportError as exception:
+                raise click.ClickException(
+                    'pymatgen is not installed. Please install it to use --pmg-set.'
+                ) from exception
+
+            if pmg_set not in PymatgenInputAdaptor.KNOWN_SETS:
+                supported = ', '.join(PymatgenInputAdaptor.KNOWN_SETS)
+                raise click.ClickException(f'Unsupported pymatgen set: {pmg_set}. Known sets: {supported}')
+
         # Validate input sources
         if not structure and not from_vasp_folder:
             click.echo('Error: Either --structure or --from-vasp-folder must be specified', err=True)
@@ -127,6 +146,11 @@ def launch_workchain(
 
         # Load structure from file or VASP folder
         overrides = process_dict_option(overrides)
+        if pmg_set:
+            overrides = recursive_merge(
+                overrides, {'pmg_kwargs': process_dict_option(pmg_kwargs) if pmg_kwargs else {}}
+            )
+            protocol = pmg_set
         if from_vasp_folder:
             structure_node, overrides_map = load_inputs_from_vasp_folder(from_vasp_folder)
             click.echo(f'Loaded structure from VASP folder: {from_vasp_folder}')
@@ -212,6 +236,8 @@ def launch_workchain(
             click.echo(f'Preset: {preset}')
             if resolved_protocol:
                 click.echo(f'Protocol: {resolved_protocol}')
+            if pmg_set:
+                click.echo(f'Pymatgen set: {pmg_set}')
             if label:
                 click.echo(f'Label: {label}')
             if description:
