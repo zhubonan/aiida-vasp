@@ -30,6 +30,7 @@ CHANGELOG
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Any, Mapping
 
 import numpy as np
 from aiida import orm
@@ -53,6 +54,28 @@ __version__ = '0.5.0'
 # 0.5.0 update the logic of convergence checking. Cell comparsion is always done using the input/output structures.
 
 
+def _to_plain_mapping(value: Any) -> dict[str, Any]:
+    """Return a plain mapping from a namespace-like object."""
+    if value is None:
+        return {}
+    if hasattr(value, '_inputs'):
+        return deepcopy(value._inputs(prune=True))
+    if isinstance(value, Mapping):
+        return {
+            key: _to_plain_mapping(sub_value)
+            if isinstance(sub_value, Mapping) and not isinstance(sub_value, orm.Data)
+            else sub_value
+            for key, sub_value in deepcopy(dict(value)).items()
+        }
+    raise TypeError(f'Cannot convert value of type {type(value)} into a mapping')
+
+
+def _merge_branch_inputs(base_inputs: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> AttributeDict:
+    """Merge branch overrides into inherited base inputs."""
+    merged = recursive_merge(_to_plain_mapping(base_inputs), _to_plain_mapping(overrides))
+    return AttributeDict(merged)
+
+
 class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
     """Structure relaxation workchain."""
 
@@ -66,15 +89,11 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
     def define(cls, spec: ProcessSpec) -> None:
         super().define(spec)
         spec.expose_inputs(cls._base_workchain, 'vasp', exclude=('structure',))
-        spec.expose_inputs(
-            cls._base_workchain,
-            'static',
-            exclude=('structure',),
-            namespace_options={
-                'required': False,
-                'populate_defaults': False,
-                'help': 'Inputs for the final static calculation performed after the relaxation.',
-            },
+        spec.input_namespace(
+            'static_overrides',
+            required=False,
+            dynamic=True,
+            help='Partial overrides for the final static calculation performed after the relaxation.',
         )
         spec.input('structure', valid_type=(orm.StructureData, orm.CifData))
         spec.input(
@@ -200,7 +219,7 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
             try:
                 from aiida_vasp.protocols.pmg import PymatgenInputAdaptor  # noqa: PLC0415
             except ImportError:
-                PymatgenInputAdaptor = None
+                pass
             else:
                 has_pmg = protocol in PymatgenInputAdaptor.KNOWN_SETS
 
@@ -242,7 +261,7 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
         builder.vasp = base_builder
         if static_builder is not None:
             static_builder.pop('structure')
-            builder.static = static_builder
+            builder.static_overrides = static_builder._inputs(prune=True)
         builder.structure = structure
         builder.relax_settings = inputs.get('relax_settings', {})
         builder.static_calc_settings = inputs.get('static_calc_settings', {})
@@ -428,12 +447,10 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
     def run_static_calculation(self) -> ToContext:
         """Perform the relaxation"""
 
-        inputs = (
-            self.exposed_inputs(self._base_workchain, 'static', agglomerate=True)
-            if 'static' in self.inputs
-            else self.exposed_inputs(self._base_workchain, 'vasp')
+        inputs = _merge_branch_inputs(
+            self.exposed_inputs(self._base_workchain, 'vasp'),
+            self.inputs.get('static_overrides'),
         )
-        inputs = AttributeDict(inputs)
 
         # For the final static run we do not need to parse the output structure
         if inputs.get('settings'):

@@ -12,7 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from aiida import orm
 from aiida.engine import run_get_node, submit
@@ -371,6 +371,26 @@ class BaseInputGenerator:
         """Set the value stored at ``port_path``."""
         parent, leaf = self._resolve_parent_and_leaf(port_path)
         setattr(parent, leaf, value)
+
+    @staticmethod
+    def _mapping_from_value(value):
+        """Return a plain mapping for a namespace-like builder value."""
+        if value is None:
+            return {}
+        if hasattr(value, '_inputs'):
+            return deepcopy(value._inputs(prune=True))
+        if isinstance(value, Mapping):
+            return deepcopy(dict(value))
+        raise TypeError(f'Cannot convert value of type {type(value)} into a mapping')
+
+    def _merge_namespace_mapping(self, namespace_path: str, updates: dict[str, Any]):
+        """Recursively merge updates into a namespace and assign the merged mapping back."""
+        if not updates:
+            return self
+        current = self._mapping_from_value(self._get_path_value(namespace_path))
+        merged = recursive_merge(current, updates)
+        self._set_path_value(namespace_path, merged)
+        return self
 
     def _get_compatible_port_paths(self, port_path: str) -> list[str]:
         """Return compatibility-linked paths for builder ports that have legacy aliases."""
@@ -840,6 +860,80 @@ class NamespaceGenerator:
         return self
 
 
+class OverrideNamespaceGenerator(NamespaceGenerator):
+    """Generator for a dynamic override namespace."""
+
+    NAMESPACE_LABEL = 'Override branch'
+    NAMESPACE_SUMMARY = 'Configure partial overrides for a derived VASP execution branch.'
+
+    def _merge_updates(self, updates: dict[str, Any]):
+        return self.root._merge_namespace_mapping(self.namespace_path, updates)
+
+    def set_incar(self, value=None, **kwargs):
+        updates = deepcopy(value or {})
+        updates.update(kwargs)
+        if not updates:
+            return self
+        return self.root._update_dict_path(self._join('parameters'), updates, namespace='incar')
+
+    def set_settings(self, value=None, **kwargs):
+        updates = deepcopy(value or {})
+        updates.update(kwargs)
+        if not updates:
+            return self
+        return self.root._update_dict_path(self._join('settings'), updates)
+
+    def set_options(self, value=None, **kwargs):
+        updates = recursive_merge(deepcopy(value or {}), kwargs)
+        if not updates:
+            return self
+        return self._merge_updates({'calc': {'metadata': {'options': updates}}})
+
+    def set_resources(self, value=None, **kwargs):
+        updates = recursive_merge(deepcopy(value or {}), kwargs)
+        if not updates:
+            return self
+        return self._merge_updates({'calc': {'metadata': {'options': {'resources': updates}}}})
+
+    def set_code(self, value):
+        if isinstance(value, str):
+            value = orm.load_code(value)
+        self.root._set_path_value(self._join('code'), value)
+        return self
+
+    def set_kspacing(self, value):
+        self.root._set_path_value(self._join('kpoints_spacing'), orm.Float(value))
+        try:
+            self.root._set_path_value(self._join('kpoints'), None)
+        except Exception:  # pragma: no cover - optional path
+            pass
+        return self
+
+    def set_kpoints(self, kpoints):
+        self.root._set_path_value(self._join('kpoints'), kpoints)
+        return self
+
+    def set_kpoints_mesh(self, mesh: list[int], offset=(0.0, 0.0, 0.0)):
+        kpoints = orm.KpointsData()
+        kpoints.set_cell_from_structure(self.reference_structure)
+        kpoints.set_kpoints_mesh(mesh, list(offset))
+        return self.set_kpoints(kpoints)
+
+    def set_potential_family(self, value):
+        if not isinstance(value, orm.Str):
+            value = orm.Str(value)
+        self.root._set_path_value(self._join('potential_family'), value)
+        return self
+
+    def set_potential_mapping(self, value=None, **kwargs):
+        updates = deepcopy(value or {})
+        updates.update(kwargs)
+        if not isinstance(updates, orm.Dict):
+            updates = orm.Dict(dict=updates)
+        self.root._set_path_value(self._join('potential_mapping'), updates)
+        return self
+
+
 class VaspCalcNamespaceGenerator(NamespaceGenerator):
     """Typed generator for a VASP child namespace."""
 
@@ -888,7 +982,7 @@ class RelaxNamespaceGenerator(NamespaceGenerator):
         return RelaxSettingsGenerator(self.root, self, self.namespace_path)
 
 
-class StaticNamespaceGenerator(VaspCalcNamespaceGenerator):
+class StaticNamespaceGenerator(OverrideNamespaceGenerator):
     """Generator for a final static calculation namespace."""
 
     NAMESPACE_LABEL = 'Final static branch'
@@ -955,12 +1049,20 @@ class ReuseNamespaceGenerator(NamespaceGenerator):
         return self
 
 
-class BandsChildGenerator(VaspCalcNamespaceGenerator):
+class BandsChildGenerator(OverrideNamespaceGenerator):
     """Generator for the band-structure NSCF child namespace."""
 
     NAMESPACE_LABEL = 'Band-structure child branch'
     NAMESPACE_SUMMARY = 'Configure the explicit bands child of an NSCF workflow.'
-    MUTATOR_DOCS = VaspCalcNamespaceGenerator.MUTATOR_DOCS + (
+    MUTATOR_DOCS = (
+        'set_incar(...): update INCAR-like parameters',
+        'set_settings(...): update parser/settings Dict',
+        'set_options(...): update scheduler metadata options',
+        'set_resources(...): update metadata.options.resources',
+        'set_code(...): replace the code node',
+        'set_kspacing(...): set k-point spacing',
+        'set_kpoints(...): attach explicit k-points',
+        'set_kpoints_mesh(...): attach a Monkhorst-Pack mesh',
         'enable(): keep the bands child active',
         'disable(): disable bands by switching to DOS-only mode',
     )
@@ -972,12 +1074,20 @@ class BandsChildGenerator(VaspCalcNamespaceGenerator):
         return self.parent.set_only_dos(True)
 
 
-class DosChildGenerator(VaspCalcNamespaceGenerator):
+class DosChildGenerator(OverrideNamespaceGenerator):
     """Generator for the DOS child namespace."""
 
     NAMESPACE_LABEL = 'DOS child branch'
     NAMESPACE_SUMMARY = 'Configure the explicit DOS child of an NSCF workflow.'
-    MUTATOR_DOCS = VaspCalcNamespaceGenerator.MUTATOR_DOCS + (
+    MUTATOR_DOCS = (
+        'set_incar(...): update INCAR-like parameters',
+        'set_settings(...): update parser/settings Dict',
+        'set_options(...): update scheduler metadata options',
+        'set_resources(...): update metadata.options.resources',
+        'set_code(...): replace the code node',
+        'set_kspacing(...): set k-point spacing',
+        'set_kpoints(...): attach explicit k-points',
+        'set_kpoints_mesh(...): attach a Monkhorst-Pack mesh',
         'enable(distance=None): enable DOS and optionally set dos_kpoints_distance',
         'disable(): disable DOS',
         'set_kpoints_distance(...): update dos_kpoints_distance',
@@ -1005,8 +1115,8 @@ class NscfNamespaceGenerator(NamespaceGenerator):
     NAMESPACE_SUMMARY = 'Configure semilocal SCF/NSCF execution.'
     ACCESSOR_DOCS = (
         'scf(): access the SCF child namespace',
-        'bands(): access the bands child namespace',
-        'dos(): access the DOS child namespace',
+        'bands(): access the bands override namespace',
+        'dos(): access the DOS override namespace',
         'reuse(): access restart/reuse inputs',
     )
     MUTATOR_DOCS = (
@@ -1040,10 +1150,10 @@ class NscfNamespaceGenerator(NamespaceGenerator):
         return VaspCalcNamespaceGenerator(self.root, self, self._join('scf'))
 
     def bands(self) -> BandsChildGenerator:
-        return BandsChildGenerator(self.root, self, self._join('bands'))
+        return BandsChildGenerator(self.root, self, self._join('bands_overrides'))
 
     def dos(self) -> DosChildGenerator:
-        return DosChildGenerator(self.root, self, self._join('dos'))
+        return DosChildGenerator(self.root, self, self._join('dos_overrides'))
 
     def reuse(self) -> ReuseNamespaceGenerator:
         return ReuseNamespaceGenerator(self.root, self, self._join('reuse'))
@@ -1198,11 +1308,11 @@ class VaspRelaxInputGenerator(BaseInputGenerator):
     WF_ENTRYPOINT = 'vasp.relax'
     WORKFLOW_LABEL = 'Relaxation workchain'
     WORKFLOW_SUMMARY = 'Configure a relaxation workflow with a child VASP branch and relax_settings.'
-    CANONICAL_PORTS = ('structure', 'vasp', 'relax_settings', 'static')
+    CANONICAL_PORTS = ('structure', 'vasp', 'relax_settings', 'static_overrides')
     ACCESSOR_DOCS = (
         'vasp(): access the main VASP calculation branch',
         'relax(): access workflow relax_settings',
-        'static(): access the optional final static branch',
+        'static(): access the optional final static override branch',
     )
     MUTATOR_DOCS = ('set_relax_settings(...): update top-level relax_settings',)
     EXAMPLES = (
@@ -1217,9 +1327,7 @@ class VaspRelaxInputGenerator(BaseInputGenerator):
         return RelaxSettingsGenerator(self, self, '')
 
     def static(self) -> StaticNamespaceGenerator:
-        if self.builder is not None and self.builder.get('static') is None:
-            self.builder.static = {}
-        return StaticNamespaceGenerator(self, self, 'static')
+        return StaticNamespaceGenerator(self, self, 'static_overrides')
 
     def set_relax_settings(self, value=None, **kwargs):
         """Set the `relax_settings` port"""
@@ -1396,11 +1504,11 @@ class VaspNscfInputGenerator(VaspBandsInputGenerator):
     WF_ENTRYPOINT = 'vasp.v2.nscf'
     WORKFLOW_LABEL = 'Standalone NSCF workchain'
     WORKFLOW_SUMMARY = 'Configure semilocal SCF/NSCF execution without relaxation or path generation.'
-    CANONICAL_PORTS = ('structure', 'scf', 'bands', 'dos', 'reuse', 'band_settings', 'bs_kpoints')
+    CANONICAL_PORTS = ('structure', 'scf', 'bands_overrides', 'dos_overrides', 'reuse', 'band_settings', 'bs_kpoints')
     ACCESSOR_DOCS = (
         'scf(): access the SCF child branch',
-        'bands(): access the bands child branch',
-        'dos(): access the DOS child branch',
+        'bands(): access the bands override branch',
+        'dos(): access the DOS override branch',
         'reuse(): access restart/reuse inputs',
     )
     MUTATOR_DOCS = (
@@ -1414,10 +1522,10 @@ class VaspNscfInputGenerator(VaspBandsInputGenerator):
         return VaspCalcNamespaceGenerator(self, self, 'scf')
 
     def bands(self) -> BandsChildGenerator:
-        return BandsChildGenerator(self, self, 'bands')
+        return BandsChildGenerator(self, self, 'bands_overrides')
 
     def dos(self) -> DosChildGenerator:
-        return DosChildGenerator(self, self, 'dos')
+        return DosChildGenerator(self, self, 'dos_overrides')
 
     def reuse(self) -> ReuseNamespaceGenerator:
         return ReuseNamespaceGenerator(self, self, 'reuse')
@@ -1460,6 +1568,10 @@ class VaspDoubleRelaxInputGenerator(VaspRelaxInputGenerator):
 
     def relax(self) -> RelaxNamespaceGenerator:
         return RelaxNamespaceGenerator(self, self, 'relax')
+
+    def set_settings(self, *args, **kwargs):
+        """Set settings for the shared relax VASP branch only."""
+        return BaseInputGenerator.set_settings(self, *args, ports=['relax.vasp.settings'], update_all=False, **kwargs)
 
     def stage_1(self) -> StageGenerator:
         return StageGenerator(self, 1, parent=self)

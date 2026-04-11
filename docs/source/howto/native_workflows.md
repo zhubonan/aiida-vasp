@@ -95,6 +95,13 @@ Inside the nested `bands` namespace, the normalized interface is:
 - `bands.band_settings`: top-level path-generation settings for the nested bands workflow
 - `bands.bs_kpoints`: optional explicit path kpoints
 
+Within `bands.nscf`, the main execution branch is `scf`.
+Branch-specific adjustments for the follow-up calculations are supplied as
+partial override namespaces:
+
+- `bands.nscf.bands_overrides`
+- `bands.nscf.dos_overrides`
+
 This is useful when the relaxation and the follow-up band-structure calculation
 should be configured independently but submitted as one provenance-preserving workflow.
 
@@ -235,6 +242,11 @@ upd.reuse().use_restart_folder(restart_folder)
 upd.dos().enable(distance=0.04)
 builder = upd.builder
 ```
+
+Here `upd.bands()` and `upd.dos()` operate on `bands_overrides` and
+`dos_overrides`, not on standalone exposed `VaspWorkChain` namespaces.
+They should therefore only be used for the fields that differ from the shared
+`scf` branch.
 
 Likewise, composite workflows such as `VaspRelaxBandsInputGenerator` expose
 separate `relax()` and `bands()` views so that stage-local configuration does

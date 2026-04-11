@@ -289,6 +289,16 @@ print(upd.nscf())
 print(upd.nscf().dos())
 ```
 
+For workflows that now use override namespaces, the child views map to partial
+runtime merges rather than fully exposed child workchains. For example:
+
+- `VaspRelaxInputGenerator.static()` updates `static_overrides`, which is merged onto `vasp` for the final single-point calculation
+- `VaspNscfInputGenerator.bands()` updates `bands_overrides`, which is merged onto `scf` for the non-SCF bands run
+- `VaspNscfInputGenerator.dos()` updates `dos_overrides`, which is merged onto `scf` for the DOS run
+
+This avoids having to populate and validate a second full child namespace when
+only a small number of fields need to change.
+
 For hybrid band structures, the access pattern is different and the schema will
 make that explicit:
 

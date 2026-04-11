@@ -142,12 +142,12 @@ def test_relax_protocol(basic_env, mock_vasp, vasp_structure, potcar_family_name
 
     assert builder.structure == vasp_structure
     assert builder.vasp.code == mock_vasp
-    assert builder.static.get('code') is None
-    assert builder.static.get('parameters') is None
+    assert builder.static_overrides.get('code') is None
+    assert builder.static_overrides.get('parameters') is None
 
 
 @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-def test_relax_protocol_pmg(monkeypatch, basic_env, mock_vasp, vasp_structure):
+def test_relax_protocol_pmg(monkeypatch, basic_env, mock_vasp, vasp_structure, potcar_family_name):
     """Known pymatgen-style protocols should propagate through the relax builder."""
 
     class FakeAdaptor:
@@ -160,7 +160,7 @@ def test_relax_protocol_pmg(monkeypatch, basic_env, mock_vasp, vasp_structure):
 
         def get_inputs(self, structure, is_workchain=True, overrides=None):
             return {
-                'potential_family': 'PBE.54',
+                'potential_family': potcar_family_name,
                 'potential_mapping': {'In': 'In_d', 'As': 'As', 'In_d': 'In_d'},
                 'parameters': {'incar': {'encut': 520, 'nsw': 99, 'ibrion': 2, 'isif': 3}},
                 'calc': {'metadata': {'options': {'resources': {'num_machines': 1}}}},
@@ -183,8 +183,8 @@ def test_relax_protocol_pmg(monkeypatch, basic_env, mock_vasp, vasp_structure):
     assert builder.vasp.parameters['incar']['encut'] == 520
     assert builder.vasp.parameters is not None
     assert builder.relax_settings['algo']
-    assert builder.static.get('code') is None
-    assert builder.static.get('parameters') is None
+    assert builder.static_overrides.get('code') is None
+    assert builder.static_overrides.get('parameters') is None
 
 
 @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
@@ -204,8 +204,8 @@ def test_relax_protocol_with_static_override(basic_env, mock_vasp, vasp_structur
         },
     )
 
-    assert builder.static.code == mock_vasp
-    assert builder.static.parameters['incar']['ismear'] == -5
+    assert builder.static_overrides.get('code') == mock_vasp
+    assert builder.static_overrides.get('parameters')['incar']['ismear'] == -5
 
 
 @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)

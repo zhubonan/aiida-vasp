@@ -56,7 +56,7 @@ VaspRelaxWorkChain
 |
 |- structure (StructureData of the input structure)
 |- vasp (exposed VaspWorkChain inputs)
-|- static (optional exposed VaspWorkChain inputs for the final static calculation)
+|- static_overrides (optional partial overrides for the final static calculation)
 |- relax_settings (settings controlling the relaxation)
 |- verbose
 ```
@@ -173,6 +173,9 @@ This may involve one or more actual VASP calculations. This is because:
 - A final singlepoint calculation may be needed to ensure that the energy is consistent with the cut off, if the lattice has been changed.
 
 The inputs to the {{ VaspRelaxWorkChain }} should be placed into the `vasp` namespace.
+If the final single-point calculation should differ from the main relaxation settings,
+use the optional `static_overrides` namespace to provide only the fields that should
+change for that last step. These values are merged into the `vasp` inputs at runtime.
 The convergence settings are specified using the `relax_settings` input which is a `Dict` containing the following keys:
 
 ```{code-cell}
@@ -217,7 +220,11 @@ Here, the workchain handles this internally, and the generated standardized prim
 In addition, an exposed `relax` namespace for running {{ VaspRelaxWorkChain }} exists and the workchain will perform
 geometry optimization before the band structure calculation if it is specified.
 
-The parameters for the scf (for generating the charge density) the actual band structure structure calculation should be specified under the exposed {{ VaspWorkChain }} namespace called  `scf` and `bands`.
+The parameters for the SCF calculation that generates the charge density are
+specified under the exposed {{ VaspWorkChain }} namespace `scf`.
+Follow-up bands and DOS runs inherit from `scf` and can be adjusted with the
+optional `bands_overrides` and `dos_overrides` namespaces, which accept partial
+input fragments merged at runtime.
 The semilocal {{ VaspBandsWorkchain }} now separates path-generation from NSCF execution internally.
 For the public input interface, the primary controls are:
 
@@ -231,8 +238,9 @@ top-level `band_settings` and `bs_kpoints`.
 
 
 :::{note}
-Within the `nscf` namespace, `scf` should always be specified, while `bands` and `dos`
-are optional overrides for the follow-up executions.
+Within the nested `nscf` namespace, `scf` is the main branch.
+The follow-up executions are configured with `bands_overrides` and `dos_overrides`,
+which should only contain the fields that differ from `scf`.
 :::
 
 Similar to the {{ VaspRelaxWorkChain }}, the behavior of the {{ VaspBandsWorkchain }}

@@ -307,8 +307,8 @@ class TestComposableInputGenerators:
 
         assert gen.builder.vasp.parameters['incar']['encut'] == 650
         assert gen.builder.relax_settings['force_cutoff'] == 0.02
-        assert gen.builder.static.get('code') is None
-        assert gen.builder.static.get('parameters') is None
+        assert gen.builder.static_overrides.get('code') is None
+        assert gen.builder.static_overrides.get('parameters') is None
 
     @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
     def test_relax_static_generator_lazily_initializes_namespace(
@@ -321,12 +321,12 @@ class TestComposableInputGenerators:
             overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
         )
 
-        assert gen.builder.static.get('code') is None
-        assert gen.builder.static.get('parameters') is None
+        assert gen.builder.static_overrides.get('code') is None
+        assert gen.builder.static_overrides.get('parameters') is None
 
         gen.static().set_incar(ismear=-5)
 
-        assert gen.builder.static.parameters['incar']['ismear'] == -5
+        assert gen.builder.static_overrides.get('parameters')['incar']['ismear'] == -5
 
     @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
     def test_relax_build_does_not_populate_static_settings(
@@ -340,7 +340,7 @@ class TestComposableInputGenerators:
         )
 
         assert gen.builder.vasp.settings is not None
-        assert gen.builder.static.get('settings') is None
+        assert gen.builder.static_overrides.get('settings') is None
 
     @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
     def test_nscf_child_generators(
@@ -362,8 +362,12 @@ class TestComposableInputGenerators:
         gen.enable_dos(distance=0.05)
         gen.set_only_dos(True)
         gen.skip_scf(restart_folder=restart)
+        gen.bands().set_incar(ismear=-5)
+        gen.dos().set_incar(ismear=1)
 
         assert gen.builder.scf.parameters['incar']['ismear'] == 0
+        assert gen.builder.bands_overrides.get('parameters')['incar']['ismear'] == -5
+        assert gen.builder.dos_overrides.get('parameters')['incar']['ismear'] == 1
         assert gen.builder.bs_kpoints == kpoints
         assert gen.builder.band_settings['run_dos'] is True
         assert gen.builder.band_settings['only_dos'] is True

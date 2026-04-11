@@ -77,6 +77,9 @@ upd.builder
 Here we can see that the input nodes are different from that of the single point calculation (workflow).
 Nodes such as the `settings` and `parameters` go into a `vasp` input names rather than at the root level.
 This is because the `VaspRelaxWorkChain` exposes the inputs of the `VaspWorkChain` in the `vasp` namespace.
+Any adjustments for the final post-relaxation single-point step now go into the
+optional `static_overrides` namespace and are merged onto `vasp` only for that
+last calculation.
 
 Also note that the `structure` input is still at the `root` level.
 This is because the atomic structure is an essential input for the relaxation (and another calculations).

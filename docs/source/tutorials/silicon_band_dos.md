@@ -79,6 +79,15 @@ builder = upd.build(si_node, code='mock-vasp@localhost',
                             })
 ```
 
+The `scf` branch is the main execution input. If the follow-up bands or DOS run
+needs different parser settings, options, or INCAR fragments, use the generator
+accessors that target `bands_overrides` and `dos_overrides`:
+
+```python
+upd.nscf().bands().set_settings(parser_settings={'include_node': ['bands']})
+upd.nscf().dos().enable(distance=0.03)
+```
+
 The workchain can be modified with several options. These options are stored in the the `band_settings` input node which of the type `orm.Dict`.
 The available options can be printed using the `aiida_description()` method.
 

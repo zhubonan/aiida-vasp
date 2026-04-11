@@ -9,7 +9,7 @@ TODO:
 
 from copy import deepcopy
 from logging import getLogger
-from typing import Any, List
+from typing import Any, List, Mapping
 
 import numpy as np
 from aiida import orm
@@ -44,6 +44,28 @@ def _set_builder_namespace(namespace, values: dict) -> None:
     """Populate a builder namespace with explicitly provided values only."""
     for key, value in values.items():
         setattr(namespace, key, value)
+
+
+def _to_plain_mapping(value: Any) -> dict[str, Any]:
+    """Return a plain mapping from a namespace-like object."""
+    if value is None:
+        return {}
+    if hasattr(value, '_inputs'):
+        return deepcopy(value._inputs(prune=True))
+    if isinstance(value, Mapping):
+        return {
+            key: _to_plain_mapping(sub_value)
+            if isinstance(sub_value, Mapping) and not isinstance(sub_value, orm.Data)
+            else sub_value
+            for key, sub_value in deepcopy(dict(value)).items()
+        }
+    raise TypeError(f'Cannot convert value of type {type(value)} into a mapping')
+
+
+def _merge_branch_inputs(base_inputs: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> AttributeDict:
+    """Merge partial branch overrides into inherited base inputs."""
+    merged = recursive_merge(_to_plain_mapping(base_inputs), _to_plain_mapping(overrides))
+    return AttributeDict(merged)
 
 
 class VaspNscfWorkChain(WorkChain, ProtocolMixin):
@@ -95,25 +117,17 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
                 'help': 'Legacy top-level inputs for the SCF workchain.',
             },
         )
-        spec.expose_inputs(
-            base_work,
-            namespace='bands',
-            exclude=('structure', 'kpoints'),
-            namespace_options={
-                'required': False,
-                'populate_defaults': False,
-                'help': 'Inputs for bands calculation, if needed',
-            },
+        spec.input_namespace(
+            'bands_overrides',
+            required=False,
+            dynamic=True,
+            help='Partial overrides for the bands calculation branch.',
         )
-        spec.expose_inputs(
-            base_work,
-            namespace='dos',
-            exclude=('structure',),
-            namespace_options={
-                'required': False,
-                'populate_defaults': False,
-                'help': 'Inputs for DOS calculation, if needed',
-            },
+        spec.input_namespace(
+            'dos_overrides',
+            required=False,
+            dynamic=True,
+            help='Partial overrides for the DOS calculation branch.',
         )
         spec.input(
             'clean_children_workdir',
@@ -206,9 +220,9 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         builder.structure = structure
         builder.scf = scf_builder
         if inputs.get('bands'):
-            builder.bands = inputs.get('bands')
+            builder.bands_overrides = inputs.get('bands')
         if inputs.get('dos'):
-            builder.dos = inputs.get('dos')
+            builder.dos_overrides = inputs.get('dos')
         if inputs.get('band_settings'):
             builder.band_settings = inputs.get('band_settings')
         if inputs.get('clean_children_workdir'):
@@ -306,15 +320,13 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         only_dos = self.inputs.band_settings['only_dos']
 
         if only_dos is False:
-            if self.inputs.get('bands') is not None:
-                bands_input = AttributeDict(self.exposed_inputs(base_work, namespace='bands'))
-            else:
-                bands_input = AttributeDict(
-                    {
-                        'settings': orm.Dict(dict={'parser_settings': {'include_node': ['bands']}}),
-                        'parameters': orm.Dict(dict={'charge': {'constant_charge': True}}),
-                    }
-                )
+            bands_input = _merge_branch_inputs(
+                inputs,
+                self.inputs.get('bands_overrides'),
+            )
+
+            if 'parameters' not in bands_input:
+                bands_input.parameters = orm.Dict(dict={'charge': {'constant_charge': True}})
 
             parameters = inputs.parameters.get_dict()
             bands_parameters = bands_input.parameters.get_dict()
@@ -326,33 +338,32 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
 
             update_nested_dict(parameters, bands_parameters)
 
-            inputs.update(bands_input)
-            inputs.parameters = orm.Dict(dict=parameters)
+            bands_input.parameters = orm.Dict(dict=parameters)
 
-            settings = inputs.get('settings')
+            settings = bands_input.get('settings')
             essential = {'parser_settings': {'include_node': ['bands']}}
             if settings is None:
-                inputs.settings = orm.Dict(dict=essential)
+                bands_input.settings = orm.Dict(dict=essential)
             else:
-                inputs.settings = update_nested_dict_node(settings, essential, extend_list=True)
+                bands_input.settings = update_nested_dict_node(settings, essential, extend_list=True)
 
-            inputs.kpoints = self.ctx.bs_kpoints
-            inputs.metadata.label = self.get_appended_label('BS')
-            inputs.metadata.call_link_label = 'bs'
+            bands_input.kpoints = self.ctx.bs_kpoints
+            bands_input.metadata.label = self.get_appended_label('BS')
+            bands_input.metadata.call_link_label = 'bs'
 
-            bands_calc = self.submit(base_work, **inputs)
+            bands_calc = self.submit(base_work, **bands_input)
             running['bands_workchain'] = bands_calc
             self.report(f'Submitted workchain {bands_calc} for band structure')
 
-        if self.inputs.band_settings['run_dos'] or ('dos' in self.inputs):
-            if 'dos' in self.inputs:
-                dos_input = AttributeDict(self.exposed_inputs(base_work, namespace='dos'))
-            else:
-                dos_input = AttributeDict(
-                    {
-                        'parameters': orm.Dict(dict={'charge': {'constant_charge': True}}),
-                    }
-                )
+        if self.inputs.band_settings['run_dos'] or ('dos_overrides' in self.inputs):
+            dos_input = _merge_branch_inputs(
+                inputs,
+                self.inputs.get('dos_overrides'),
+            )
+
+            if 'parameters' not in dos_input:
+                dos_input.parameters = orm.Dict(dict={'charge': {'constant_charge': True}})
+            if 'dos_overrides' not in self.inputs:
                 dos_kpoints = orm.KpointsData()
                 dos_kpoints.set_cell_from_structure(self.ctx.current_structure)
                 dos_kpoints.set_kpoints_mesh_from_density(self.inputs.band_settings['dos_kpoints_distance'] * 2 * np.pi)
@@ -360,29 +371,28 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
 
             parameters = inputs.parameters.get_dict()
             dos_parameters = dos_input.parameters.get_dict()
-            update_nested_dict(parameters, dos_parameters)
 
             if 'charge' in dos_parameters:
                 dos_parameters['charge']['constant_charge'] = True
             else:
                 dos_parameters['charge'] = {'constant_charge': True}
 
-            inputs.update(dos_input)
-            inputs.parameters = orm.Dict(dict=parameters)
+            update_nested_dict(parameters, dos_parameters)
+            dos_input.parameters = orm.Dict(dict=parameters)
 
-            if 'dos' not in self.inputs:
-                settings = inputs.get('settings')
+            if 'dos_overrides' not in self.inputs:
+                settings = dos_input.get('settings')
                 essential = {'parser_settings': {'include_node': ['dos', 'bands']}}
 
                 if settings is None:
-                    inputs.settings = orm.Dict(dict=essential)
+                    dos_input.settings = orm.Dict(dict=essential)
                 else:
-                    inputs.settings = update_nested_dict_node(settings, essential, extend_list=True)
+                    dos_input.settings = update_nested_dict_node(settings, essential, extend_list=True)
 
-            inputs.metadata.label = self.get_appended_label('DOS')
-            inputs.metadata.call_link_label = 'dos'
+            dos_input.metadata.label = self.get_appended_label('DOS')
+            dos_input.metadata.call_link_label = 'dos'
 
-            dos_calc = self.submit(base_work, **inputs)
+            dos_calc = self.submit(base_work, **dos_input)
             running['dos_workchain'] = dos_calc
             self.report(f'Submitted workchain {dos_calc} for DOS')
 
@@ -653,9 +663,9 @@ class VaspBandsWorkChain(WorkChain, ProtocolMixin):
         if inputs.get('scf'):
             nscf_overrides['scf'] = inputs.get('scf', {})
         if inputs.get('bands'):
-            nscf_overrides['bands'] = inputs.get('bands', {})
+            nscf_overrides['bands_overrides'] = inputs.get('bands', {})
         if inputs.get('dos'):
-            nscf_overrides['dos'] = inputs.get('dos', {})
+            nscf_overrides['dos_overrides'] = inputs.get('dos', {})
         if inputs.get('reuse'):
             nscf_overrides['reuse'] = inputs.get('reuse', {})
 
@@ -693,10 +703,10 @@ class VaspBandsWorkChain(WorkChain, ProtocolMixin):
         _set_builder_namespace(builder.scf, scf_builder._inputs(prune=True))
         if relax_builder is not None:
             _set_builder_namespace(builder.relax, relax_builder._inputs(prune=True))
-        if 'bands' in nscf_builder:
-            _set_builder_namespace(builder.bands, nscf_builder.bands._inputs(prune=True))
-        if 'dos' in nscf_builder:
-            _set_builder_namespace(builder.dos, nscf_builder.dos._inputs(prune=True))
+        if 'bands_overrides' in nscf_builder:
+            _set_builder_namespace(builder.bands, _to_plain_mapping(nscf_builder.bands_overrides))
+        if 'dos_overrides' in nscf_builder:
+            _set_builder_namespace(builder.dos, _to_plain_mapping(nscf_builder.dos_overrides))
         if top_level_band_settings:
             builder.band_settings = top_level_band_settings
         if path_inputs.get('band_settings'):
@@ -881,9 +891,9 @@ class VaspBandsWorkChain(WorkChain, ProtocolMixin):
             inputs = AttributeDict()
             inputs.scf = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='scf'))
             if self.inputs.get('bands') is not None:
-                inputs.bands = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='bands'))
+                inputs.bands_overrides = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='bands'))
             if self.inputs.get('dos') is not None:
-                inputs.dos = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='dos'))
+                inputs.dos_overrides = AttributeDict(self.exposed_inputs(self._base_workchain, namespace='dos'))
         inputs.metadata = {'call_link_label': 'nscf', 'label': self.get_appended_label('NSCF')}
         inputs.structure = self.ctx.current_structure
         inputs.band_settings = self.ctx.band_settings
