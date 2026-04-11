@@ -5,6 +5,21 @@ Functions to merge dictionaries
 import collections
 from copy import deepcopy
 
+from aiida import orm
+
+
+def _safe_deepcopy(value):
+    """Deep-copy plain Python containers while preserving AiiDA nodes by identity."""
+    if isinstance(value, orm.Node):
+        return value
+    if isinstance(value, dict):
+        return {key: _safe_deepcopy(sub_value) for key, sub_value in value.items()}
+    if isinstance(value, list):
+        return [_safe_deepcopy(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_safe_deepcopy(item) for item in value)
+    return deepcopy(value)
+
 
 def recursive_merge_orig(left: dict, right: dict) -> dict:
     """Recursively merge two dictionaries into a single dictionary.
@@ -77,7 +92,7 @@ def recursive_merge(left: dict, right: dict) -> dict:
         {'a': {'y': 2}}
     """
     # Here a deepcopy is necessary as in-place modification is used
-    left = deepcopy(left)
+    left = _safe_deepcopy(left)
     for key, value_right in right.items():
         if key in left:
             # Apply special operations

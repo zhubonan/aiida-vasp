@@ -267,6 +267,8 @@ class BaseInputGenerator:
     def _load_code_node(code):
         """Return a loaded code node from a string/PK or pass through a code instance."""
         if isinstance(code, orm.AbstractCode):
+            if not code.is_stored:
+                raise ValueError('The supplied code node must be stored before it can be used to build inputs.')
             return code
         return orm.load_code(code)
 
@@ -377,11 +379,20 @@ class BaseInputGenerator:
         """Return a plain mapping for a namespace-like builder value."""
         if value is None:
             return {}
+        if isinstance(value, orm.Node):
+            return value
         if hasattr(value, '_inputs'):
-            return deepcopy(value._inputs(prune=True))
+            return {
+                key: BaseInputGenerator._mapping_from_value(sub_value)
+                for key, sub_value in value._inputs(prune=True).items()
+            }
         if isinstance(value, Mapping):
-            return deepcopy(dict(value))
-        raise TypeError(f'Cannot convert value of type {type(value)} into a mapping')
+            return {key: BaseInputGenerator._mapping_from_value(sub_value) for key, sub_value in value.items()}
+        if isinstance(value, list):
+            return [BaseInputGenerator._mapping_from_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(BaseInputGenerator._mapping_from_value(item) for item in value)
+        return deepcopy(value)
 
     def _merge_namespace_mapping(self, namespace_path: str, updates: dict[str, Any]):
         """Recursively merge updates into a namespace and assign the merged mapping back."""

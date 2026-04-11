@@ -58,16 +58,17 @@ def _to_plain_mapping(value: Any) -> dict[str, Any]:
     """Return a plain mapping from a namespace-like object."""
     if value is None:
         return {}
+    if isinstance(value, orm.Node):
+        return value
     if hasattr(value, '_inputs'):
-        return deepcopy(value._inputs(prune=True))
+        return {key: _to_plain_mapping(sub_value) for key, sub_value in value._inputs(prune=True).items()}
     if isinstance(value, Mapping):
-        return {
-            key: _to_plain_mapping(sub_value)
-            if isinstance(sub_value, Mapping) and not isinstance(sub_value, orm.Data)
-            else sub_value
-            for key, sub_value in deepcopy(dict(value)).items()
-        }
-    raise TypeError(f'Cannot convert value of type {type(value)} into a mapping')
+        return {key: _to_plain_mapping(sub_value) for key, sub_value in value.items()}
+    if isinstance(value, list):
+        return [_to_plain_mapping(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_to_plain_mapping(item) for item in value)
+    return deepcopy(value)
 
 
 def _merge_branch_inputs(base_inputs: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> AttributeDict:
@@ -261,7 +262,11 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
         builder.vasp = base_builder
         if static_builder is not None:
             static_builder.pop('structure')
-            builder.static_overrides = static_builder._inputs(prune=True)
+            static_inputs = static_builder._inputs(prune=True)
+            # The final static step inherits the main code input by default.
+            # Avoid copying it into the override namespace unless the user sets it explicitly later.
+            static_inputs.pop('code', None)
+            builder.static_overrides = static_inputs
         builder.structure = structure
         builder.relax_settings = inputs.get('relax_settings', {})
         builder.static_calc_settings = inputs.get('static_calc_settings', {})

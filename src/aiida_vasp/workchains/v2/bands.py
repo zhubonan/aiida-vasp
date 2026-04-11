@@ -50,16 +50,17 @@ def _to_plain_mapping(value: Any) -> dict[str, Any]:
     """Return a plain mapping from a namespace-like object."""
     if value is None:
         return {}
+    if isinstance(value, orm.Node):
+        return value
     if hasattr(value, '_inputs'):
-        return deepcopy(value._inputs(prune=True))
+        return {key: _to_plain_mapping(sub_value) for key, sub_value in value._inputs(prune=True).items()}
     if isinstance(value, Mapping):
-        return {
-            key: _to_plain_mapping(sub_value)
-            if isinstance(sub_value, Mapping) and not isinstance(sub_value, orm.Data)
-            else sub_value
-            for key, sub_value in deepcopy(dict(value)).items()
-        }
-    raise TypeError(f'Cannot convert value of type {type(value)} into a mapping')
+        return {key: _to_plain_mapping(sub_value) for key, sub_value in value.items()}
+    if isinstance(value, list):
+        return [_to_plain_mapping(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_to_plain_mapping(item) for item in value)
+    return deepcopy(value)
 
 
 def _merge_branch_inputs(base_inputs: Mapping[str, Any], overrides: Mapping[str, Any] | None = None) -> AttributeDict:
