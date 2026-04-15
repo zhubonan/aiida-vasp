@@ -16,14 +16,6 @@ def test_entrypoints(aiida_profile):
         'vasp.v2.nscf',
         'vasp.v2.hybrid_bands',
         'vasp.v2.staged_relax',
-        'vasp.v2.double_relax',
-        'vasp.v2.relax_bands',
-        'vasp.v2.mp_gga_double_relax',
-        'vasp.v2.mp_gga_relax_static',
-        'vasp.v2.mp_meta_gga_double_relax',
-        'vasp.v2.mp_meta_gga_relax_static',
-        'vasp.v2.mp24_double_relax',
-        'vasp.v2.mp24_relax_static',
     ]
     for point in entrypoints:
         WorkflowFactory(point)

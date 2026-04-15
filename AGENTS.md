@@ -21,13 +21,13 @@ Recent history favors short, imperative subjects such as `Added option to bypass
 All commands for testing should be prefixed with `source .venv/bin/activate`. For example:
 
 ```bash
-source .venv/bin/activate && verdi run run_matpes_static_si.py
+source .venv/bin/activate && uv run pytest tests/workchains/v2 -q
 ```
 
 Or use the uv run command:
 
 ```bash
-uv run verdi run run_matpes_static_si.py
+uv run pytest tests/workchains/v2 -q
 ```
 
 This ensures the correct virtual environment is activated before running commands.

@@ -100,15 +100,6 @@ graphs = ["matplotlib"]
 "vasp.v2.hybrid_bands" = "aiida_vasp.workchains.v2.bands:VaspHybridBandsWorkChain"
 "vasp.v2.relax" = "aiida_vasp.workchains.v2.relax:VaspRelaxWorkChain"
 "vasp.v2.staged_relax" = "aiida_vasp.workchains.v2.relax:VaspMultiStageRelaxWorkChain"
-"vasp.v2.double_relax" = "aiida_vasp.workchains.v2.core_flows:VaspDoubleRelaxWorkChain"
-"vasp.v2.relax_bands" = "aiida_vasp.workchains.v2.core_flows:VaspRelaxBandsWorkChain"
-"vasp.v2.mp_gga_double_relax" = "aiida_vasp.workchains.v2.mp:VaspMPGGADoubleRelaxWorkChain"
-"vasp.v2.mp_gga_relax_static" = "aiida_vasp.workchains.v2.mp:VaspMPGGARelaxStaticWorkChain"
-"vasp.v2.mp_meta_gga_double_relax" = "aiida_vasp.workchains.v2.mp:VaspMPMetaGGADoubleRelaxWorkChain"
-"vasp.v2.mp_meta_gga_relax_static" = "aiida_vasp.workchains.v2.mp:VaspMPMetaGGARelaxStaticWorkChain"
-"vasp.v2.mp24_double_relax" = "aiida_vasp.workchains.v2.mp:VaspMP24DoubleRelaxWorkChain"
-"vasp.v2.mp24_relax_static" = "aiida_vasp.workchains.v2.mp:VaspMP24RelaxStaticWorkChain"
-"vasp.v2.matpes_static" = "aiida_vasp.workchains.v2.mp:MatPesStaticWorkChain"
 
 [project.entry-points."aiida.groups"]
 "vasp.potcar" = "aiida_vasp.data.potcar:PotcarGroup"

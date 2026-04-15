@@ -8,16 +8,8 @@ from aiida.manage.manager import get_manager
 from aiida_vasp.workchains.v2 import (
     VaspBandsWorkChain,
     VaspConvergenceWorkChain,
-    VaspDoubleRelaxWorkChain,
     VaspHybridBandsWorkChain,
-    VaspMP24DoubleRelaxWorkChain,
-    VaspMP24RelaxStaticWorkChain,
-    VaspMPGGADoubleRelaxWorkChain,
-    VaspMPGGARelaxStaticWorkChain,
-    VaspMPMetaGGADoubleRelaxWorkChain,
-    VaspMPMetaGGARelaxStaticWorkChain,
     VaspNscfWorkChain,
-    VaspRelaxBandsWorkChain,
     VaspRelaxWorkChain,
     VaspWorkChain,
 )
@@ -287,78 +279,3 @@ def test_conv_protocol(basic_env, mock_vasp, vasp_structure, potcar_family_name)
     assert builder.vasp.code == mock_vasp
     assert builder.vasp.parameters is not None
     assert builder.conv_settings is not None
-
-
-@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-def test_double_relax_protocol(basic_env, mock_vasp, vasp_structure, potcar_family_name):
-    """Test native double-relax builder generation."""
-
-    builder = VaspDoubleRelaxWorkChain.get_builder_from_protocol(
-        code=mock_vasp,
-        structure=vasp_structure,
-        overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-        stage_2_overrides={'parameters': {'incar': {'encut': 600}}},
-    )
-
-    assert builder.structure == vasp_structure
-    assert builder.relax.vasp.code == mock_vasp
-    assert builder.stage_2.parameters['incar']['encut'] == 600
-
-
-@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-def test_relax_bands_protocol(basic_env, mock_vasp, vasp_structure, potcar_family_name):
-    """Test native relax+bands builder generation."""
-
-    builder = VaspRelaxBandsWorkChain.get_builder_from_protocol(
-        code=mock_vasp,
-        structure=vasp_structure,
-        overrides={
-            'relax': {'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-            'bands': {
-                'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}},
-            },
-        },
-    )
-
-    assert builder.structure == vasp_structure
-    assert builder.relax.vasp.code == mock_vasp
-    assert builder.bands.nscf.scf.code == mock_vasp
-
-
-@pytest.mark.parametrize(
-    'workflow_class',
-    [
-        VaspMPGGADoubleRelaxWorkChain,
-        VaspMPMetaGGADoubleRelaxWorkChain,
-        VaspMP24DoubleRelaxWorkChain,
-    ],
-)
-@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-def test_mp_double_relax_builders(basic_env, mock_vasp, vasp_structure, workflow_class):
-    """Test native MP double-relax builders."""
-
-    builder = workflow_class.get_builder_from_protocol(code=mock_vasp, structure=vasp_structure)
-
-    assert builder.structure == vasp_structure
-    assert builder.relax.vasp.code == mock_vasp
-    assert builder.relax.vasp.parameters is not None
-
-
-@pytest.mark.parametrize(
-    'workflow_class',
-    [
-        VaspMPGGARelaxStaticWorkChain,
-        VaspMPMetaGGARelaxStaticWorkChain,
-        VaspMP24RelaxStaticWorkChain,
-    ],
-)
-@pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-def test_mp_relax_static_builders(basic_env, mock_vasp, vasp_structure, workflow_class):
-    """Test native MP relax+static builders."""
-
-    builder = workflow_class.get_builder_from_protocol(code=mock_vasp, structure=vasp_structure)
-
-    assert builder.structure == vasp_structure
-    assert builder.relax is not None
-    assert builder.static.code == mock_vasp
-    assert builder.static.parameters is not None

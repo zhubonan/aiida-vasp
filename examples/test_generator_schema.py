@@ -16,7 +16,6 @@ from aiida_vasp.protocols.generator import (
     VaspBandsInputGenerator,
     VaspHybridBandsInputGenerator,
     VaspNscfInputGenerator,
-    VaspRelaxBandsInputGenerator,
 )
 from aiida_vasp.utils.temp_profile import load_temp_profile
 
@@ -147,26 +146,6 @@ def build_standalone_nscf(structure: orm.StructureData, code: str, protocol: str
     return gen
 
 
-def build_relax_bands(structure: orm.StructureData, code: str, protocol: str):
-    """Build a relax-plus-bands generator."""
-    gen = VaspRelaxBandsInputGenerator(protocol=protocol)
-    gen.build(
-        structure=structure,
-        code=code,
-        overrides={
-            'relax': {'vasp': {'potential_family': POTCAR_FAMILY}},
-            'bands': {
-                'relax': {'vasp': {'potential_family': POTCAR_FAMILY}},
-                'nscf': {'scf': {'potential_family': POTCAR_FAMILY}},
-            },
-        },
-    )
-    gen.relax().relax().set_relax_settings(force_cutoff=0.03)
-    gen.bands().set_band_settings(run_dos=True, dos_kpoints_distance=0.03)
-    gen.bands().nscf().scf().set_incar(ismear=0)
-    return gen
-
-
 def show_generator(name: str, generator, show_builder: bool) -> None:
     """Print the generator schema and some important namespace views."""
     print_header(name)
@@ -200,7 +179,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         '--workflow',
-        choices=('all', 'bands', 'hybrid', 'nscf', 'relax-bands'),
+        choices=('all', 'bands', 'hybrid', 'nscf'),
         default='all',
         help='Which generator example to build.',
     )
@@ -236,7 +215,6 @@ def main() -> None:
         'bands': build_semilocal_bands,
         'hybrid': build_hybrid_bands,
         'nscf': build_standalone_nscf,
-        'relax-bands': build_relax_bands,
     }
 
     selected = builders.keys() if args.workflow == 'all' else (args.workflow,)

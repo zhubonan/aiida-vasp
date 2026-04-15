@@ -14,11 +14,9 @@ from aiida.engine.processes.builder import ProcessBuilderNamespace
 from aiida_vasp.protocols.generator import (
     PresetConfig,
     VaspBandsInputGenerator,
-    VaspDoubleRelaxInputGenerator,
     VaspHybridBandsInputGenerator,
     VaspInputGenerator,
     VaspNscfInputGenerator,
-    VaspRelaxBandsInputGenerator,
     VaspRelaxInputGenerator,
     get_library_path,
     has_content,
@@ -424,94 +422,6 @@ class TestComposableInputGenerators:
 
         with pytest.raises(AttributeError, match='uses `scf\\(\\)`, not `nscf\\(\\)`'):
             gen.nscf()
-
-    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-    def test_generator_schema_and_describe(
-        self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure
-    ):
-        gen = VaspRelaxBandsInputGenerator()
-        gen.build(
-            structure=vasp_structure,
-            code='mock-vasp-loose@localhost',
-            overrides={
-                'relax': {'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-                'bands': {'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-            },
-        )
-
-        schema = gen.schema()
-        assert schema['title'] == 'VaspRelaxBandsInputGenerator: Relax-plus-bands workchain'
-        assert 'relax(): access the top-level relax workflow' in schema['accessors']
-        assert 'bands(): access the nested bands workflow' in schema['accessors']
-
-        desc = gen.describe()
-        assert 'Canonical ports:' in desc
-        assert 'structure' in desc
-        assert 'bands(): access the nested bands workflow' in desc
-
-        ns_desc = gen.bands().describe()
-        assert 'Nested bands workflow branch' in ns_desc
-        assert 'nscf(): access the semilocal NSCF execution branch' in ns_desc
-
-    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-    def test_double_relax_stage_generators(
-        self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure
-    ):
-        gen = VaspDoubleRelaxInputGenerator()
-        gen.build(
-            structure=vasp_structure,
-            code='mock-vasp-loose@localhost',
-            overrides={'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-        )
-        gen.relax().vasp().set_incar(encut=520)
-        gen.stage_1().set_relax_settings(force_cutoff=0.03)
-        gen.stage_2().set_incar(encut=700)
-
-        assert gen.builder.relax.vasp.parameters['incar']['encut'] == 520
-        assert gen.builder.stage_1.relax_settings['force_cutoff'] == 0.03
-        assert gen.builder.stage_2.parameters['incar']['encut'] == 700
-
-    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-    def test_relax_bands_child_generators(
-        self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure
-    ):
-        gen = VaspRelaxBandsInputGenerator()
-        gen.build(
-            structure=vasp_structure,
-            code='mock-vasp-loose@localhost',
-            overrides={
-                'relax': {'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-                'bands': {'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-            },
-        )
-        gen.relax().relax().set_relax_settings(force_cutoff=0.02)
-        gen.bands().scf().set_incar(ismear=0)
-        gen.bands().set_band_settings(run_dos=True)
-        gen.bands().enable_dos(distance=0.03)
-
-        assert gen.builder.relax.relax_settings['force_cutoff'] == 0.02
-        assert gen.builder.bands.nscf.scf.parameters['incar']['ismear'] == 0
-        assert gen.builder.bands.band_settings['run_dos'] is True
-        assert gen.builder.bands.path.band_settings['run_dos'] is True
-
-    @pytest.mark.parametrize(['vasp_structure'], [('str',)], indirect=True)
-    def test_relax_bands_build_with_separate_protocols(
-        self, aiida_profile, mock_vasp, potcar_family_name, upload_potcar, vasp_structure
-    ):
-        gen = VaspRelaxBandsInputGenerator()
-        gen.build(
-            structure=vasp_structure,
-            code='mock-vasp-loose@localhost',
-            relax_protocol='fast',
-            band_protocol='bradcrack',
-            overrides={
-                'relax': {'vasp': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-                'bands': {'scf': {'potential_family': potcar_family_name, 'potential_mapping': {'In_d': 'In_d'}}},
-            },
-        )
-
-        assert gen.builder.relax.relax_settings['force_cutoff'] == 0.05
-        assert gen.builder.bands.band_settings['band_mode'] == 'bradcrack'
 
     def test_incar_dict_to_relax_settings_ibrion_rd(self):
         """Test converting ibrion=1 to RMM-DIIS algorithm."""
