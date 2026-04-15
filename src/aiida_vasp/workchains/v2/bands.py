@@ -30,6 +30,7 @@ from aiida_vasp.protocols import ProtocolMixin, recursive_merge
 from aiida_vasp.utils.extended_dicts import update_nested_dict, update_nested_dict_node
 from aiida_vasp.utils.kmesh import get_ir_kpoints_data
 from aiida_vasp.utils.opthold import BandOptions
+from aiida_vasp.utils.workchains import report_child_error
 
 from .relax import VaspRelaxWorkChain
 from .vasp import VaspWorkChain
@@ -289,8 +290,7 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         """Inspect the SCF calculation."""
         scf_workchain = self.ctx.workchain_scf
         if not scf_workchain.is_finished_ok:
-            self.report('SCF workchain finished with Error')
-            return self.exit_codes.ERROR_SUB_PROC_SCF_FAILED
+            return report_child_error(self, scf_workchain, self.exit_codes.ERROR_SUB_PROC_SCF_FAILED, 'SCF calculation')
 
         if 'chgcar' in scf_workchain.outputs:
             self.ctx.chgcar = scf_workchain.outputs.chgcar
@@ -406,7 +406,7 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         if 'bands_workchain' in self.ctx:
             bands = self.ctx.bands_workchain
             if not bands.is_finished_ok:
-                self.report(f'Bands calculation finished with error, exit_status: {bands}')
+                report_child_error(self, bands, self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED, 'bands calculation')
                 exit_code = self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
             elif 'bands' not in bands.outputs:
                 self.report(f'Bands calculation {bands} finished without a `bands` output.')
@@ -420,7 +420,7 @@ class VaspNscfWorkChain(WorkChain, ProtocolMixin):
         if 'dos_workchain' in self.ctx:
             dos = self.ctx.dos_workchain
             if not dos.is_finished_ok:
-                self.report(f'DOS calculation finished with error, exit_status: {dos.exit_status}')
+                report_child_error(self, dos, self.exit_codes.ERROR_SUB_PROC_DOS_FAILED, 'DOS calculation')
                 exit_code = self.exit_codes.ERROR_SUB_PROC_DOS_FAILED
             elif 'dos' not in dos.outputs:
                 self.report(f'DOS calculation {dos} finished without a `dos` output.')
@@ -796,8 +796,7 @@ class VaspBandsWorkChain(WorkChain, ProtocolMixin):
         """Verify the relaxation"""
         relax_workchain = self.ctx.workchain_relax
         if not relax_workchain.is_finished_ok:
-            self.report('Relaxation finished with Error')
-            return self.exit_codes.ERROR_SUB_PROC_RELAX_FAILED
+            return report_child_error(self, relax_workchain, self.exit_codes.ERROR_SUB_PROC_RELAX_FAILED, 'relaxation')
 
         # Use the relaxed structure as the current structure
         self.ctx.current_structure = relax_workchain.outputs.relax.structure
@@ -927,7 +926,10 @@ class VaspBandsWorkChain(WorkChain, ProtocolMixin):
         nscf_workchain = self.ctx.workchain_nscf
         if not nscf_workchain.is_finished_ok:
             exit_status = nscf_workchain.exit_status
-            self.report(f'NSCF workchain finished with Error, exit_status={exit_status}')
+            self.report(
+                f'NSCF workchain ({nscf_workchain.__class__.__name__}<{nscf_workchain.pk}>) '
+                f'failed with exit status {exit_status}: {nscf_workchain.exit_message}'
+            )
             if exit_status == self._nscf_workchain.exit_codes.ERROR_SUB_PROC_SCF_FAILED.status:
                 return self.exit_codes.ERROR_SUB_PROC_SCF_FAILED
             if exit_status == self._nscf_workchain.exit_codes.ERROR_SUB_PROC_BANDS_FAILED.status:
@@ -1282,8 +1284,9 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
         """Inspect the SCF for kpoints calculation"""
         scf_workchain = self.ctx.workchain_scf_for_kpoints
         if not scf_workchain.is_finished_ok:
-            self.report('SCF for kpoints workchain finished with Error')
-            return self.exit_codes.ERROR_SUB_PROC_SCF_FAILED
+            return report_child_error(
+                self, scf_workchain, self.exit_codes.ERROR_SUB_PROC_SCF_FAILED, 'SCF for kpoints calculation'
+            )
 
         # Save the obtained kpoints
         self.ctx.scf_kpoints = scf_workchain.outputs.kpoints
@@ -1354,7 +1357,11 @@ class VaspHybridBandsWorkChain(VaspBandsWorkChain):
 
         return_codes = [work.exit_status for work in workchains]
         if any(return_codes):
-            self.report('At least one calculation did not have zero return code!')
+            failed = [(work.pk, work.exit_status, work.exit_message) for work in workchains if work.exit_status]
+            self.report(
+                f'{len(failed)} of {len(workchains)} split calculations failed: '
+                + ', '.join(f'{pk} (exit {status}: {msg})' for pk, status, msg in failed)
+            )
             return self.exit_codes.ERROR_SUB_PROC_BANDS_FAILED
 
         # Extract the bands information

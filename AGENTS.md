@@ -14,3 +14,20 @@ This project uses `pytest`; coverage is tracked in CI with `pytest-cov`, but no 
 
 ## Commit & Pull Request Guidelines
 Recent history favors short, imperative subjects such as `Added option to bypass residual force check (#836)` and dependency updates like `Bump actions/upload-artifact from 5 to 6`. Keep the first line specific and scoped; add a body when context is needed. Open PRs against `develop`, link related issues in the template, mark whether the PR is ready or WIP, and describe the change clearly. Run `uv run pytest` and `uv run pre-commit run --all-files` before requesting review.
+# Claude Instructions for aiida-vasp
+
+## Testing Commands
+
+All commands for testing should be prefixed with `source .venv/bin/activate`. For example:
+
+```bash
+source .venv/bin/activate && verdi run run_matpes_static_si.py
+```
+
+Or use the uv run command:
+
+```bash
+uv run verdi run run_matpes_static_si.py
+```
+
+This ensures the correct virtual environment is activated before running commands.

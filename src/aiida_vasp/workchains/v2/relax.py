@@ -43,6 +43,7 @@ from aiida.plugins import WorkflowFactory
 
 from aiida_vasp.common import OVERRIDE_NAMESPACE, site_magnetization_to_magmom
 from aiida_vasp.protocols import ProtocolMixin, recursive_merge
+from aiida_vasp.utils.error_suggestions import get_error_suggestion
 from aiida_vasp.utils.extended_dicts import update_nested_dict, update_nested_dict_node
 from aiida_vasp.utils.opthold import RelaxOptions
 from aiida_vasp.utils.workchains import compose_exit_code
@@ -263,9 +264,6 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
         if static_builder is not None:
             static_builder.pop('structure')
             static_inputs = static_builder._inputs(prune=True)
-            # The final static step inherits the main code input by default.
-            # Avoid copying it into the override namespace unless the user sets it explicitly later.
-            static_inputs.pop('code', None)
             builder.static_overrides = static_inputs
         builder.structure = structure
         builder.relax_settings = inputs.get('relax_settings', {})
@@ -843,6 +841,7 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
             # proceed furthure, and the result of last calculation is attached
             workchain = self.ctx.workchains[-1]
             self.out_many(self.exposed_outputs(workchain, self._base_workchain))
+            self.report(get_error_suggestion(600))
             return self.exit_codes.ERROR_RELAX_NOT_CONVERGED  # pylint: disable=no-member
 
     def results(self) -> None | ExitCode:
@@ -877,6 +876,7 @@ class VaspRelaxWorkChain(WorkChain, ProtocolMixin):
                         f' {max_force_threshold} eV/A.'
                     )
                 if not self.ctx.is_double_relax:
+                    self.report(get_error_suggestion(601))
                     return self.exit_codes.ERROR_FINAL_SCF_HAS_RESIDUAL_FORCE  # pylint: disable=no-member
         else:
             self.report(

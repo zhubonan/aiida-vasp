@@ -131,6 +131,28 @@ def compose_exit_code(status: int, message: str) -> ExitCode:
     return exit_code
 
 
+def report_child_error(parent_wc, child, parent_exit_code, stage_name='child'):
+    """Report a child workchain's exit details into the parent's log.
+
+    Logs the child's class name, PK, exit status and exit message, then
+    returns the provided parent exit code so the call can be used directly
+    as a return statement::
+
+        return report_child_error(self, child_wc, self.exit_codes.ERROR_STAGE_FAILED, 'relaxation')
+
+    :param parent_wc: The parent workchain instance (has ``self.report``).
+    :param child: The child workchain node (has ``exit_status``, ``exit_message``, ``pk``).
+    :param parent_exit_code: The ``ExitCode`` to return from the parent.
+    :param stage_name: Human-readable name for the stage (e.g. "first relaxation stage").
+    :returns: The *parent_exit_code* that was passed in.
+    """
+    parent_wc.report(
+        f'The {stage_name} ({child.__class__.__name__}<{child.pk}>) '
+        f'failed with exit status {child.exit_status}: {child.exit_message}'
+    )
+    return parent_exit_code
+
+
 def site_magnetization_to_magmom(site_dict: Any) -> List[Any]:
     """
     Convert site magnetization to MAGMOM used for restart

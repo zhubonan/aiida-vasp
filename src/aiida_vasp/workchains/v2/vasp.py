@@ -74,6 +74,7 @@ from aiida_vasp.common import parameters_validator, warn_deprecated_options
 from aiida_vasp.common.dryrun import get_jobscheme
 from aiida_vasp.data.potcar import PotcarData
 from aiida_vasp.protocols import ProtocolMixin, recursive_merge
+from aiida_vasp.utils.error_suggestions import get_error_suggestion
 from aiida_vasp.utils.ldau import get_ldau_keys
 from aiida_vasp.utils.workchains import compose_exit_code, prepare_process_inputs, site_magnetization_to_magmom
 
@@ -824,6 +825,7 @@ A nested dictionary containing the following keys:
         """Handle the case where the calculation is not performed"""
         if self.ctx.vasp_did_not_execute:
             self.report(f'{node} did not execute, and this is the second time - aborting.')
+            self.report(get_error_suggestion(501, 'vasp_did_not_execute'))
             return ProcessHandlerReport(
                 do_break=True,
                 exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(
@@ -862,6 +864,7 @@ A nested dictionary containing the following keys:
         if incar.get('nsw', -1) > 0:
             if 'structure' not in node.outputs:
                 self.report('Performing a geometry optimization but the output structure is not found.')
+                self.report(get_error_suggestion(501, 'no_output_structure'))
                 return ProcessHandlerReport(
                     do_break=True,
                     exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(
@@ -886,6 +889,7 @@ A nested dictionary containing the following keys:
                 'The last calculation was not completed for the second time, potentially due to insufficient'
                 'walltime/node failure. Please revise the resources request and/or input parameters.'
             )
+            self.report(get_error_suggestion(501, 'walltime'))
             return ProcessHandlerReport(
                 do_break=True,
                 exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=msg),
@@ -998,6 +1002,7 @@ A nested dictionary containing the following keys:
             self.report('No more algorithms to try and we still have not reached electronic convergence.')
 
         self.report('No additional fixes can be applied to improve the electronic convergence - aborting.')
+        self.report(get_error_suggestion(501, 'electronic_conv'))
         return ProcessHandlerReport(
             do_break=True,
             exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(
@@ -1084,6 +1089,7 @@ A nested dictionary containing the following keys:
             self.report('Switching to ALGO = ALL')
             return ProcessHandlerReport(do_break=True)
         self.report('No additional fixes can be applied to improve the electronic convergence - aborting.')
+        self.report(get_error_suggestion(501, 'electronic_conv'))
         return ProcessHandlerReport(
             do_break=True,
             exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(
@@ -1107,6 +1113,7 @@ A nested dictionary containing the following keys:
 
         if 'structure' not in node.outputs:
             self.report('Performing a geometry optimization but the output structure is not found.')
+            self.report(get_error_suggestion(501, 'ionic_no_structure'))
             return ProcessHandlerReport(
                 do_break=True,
                 exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(
@@ -1144,6 +1151,7 @@ A nested dictionary containing the following keys:
                 '- please consider to revise the cutoff value of the ionic steps.'
             )
             self.report(msg)
+            self.report(get_error_suggestion(501, 'energy_diff_small'))
             return ProcessHandlerReport(
                 do_break=True,
                 exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=msg),
@@ -1157,6 +1165,7 @@ A nested dictionary containing the following keys:
                 'please consider submitting the jobs with revised resources request.'
             )
             self.report(msg)
+            self.report(get_error_suggestion(501, 'too_few_iterations'))
             return ProcessHandlerReport(
                 do_break=True,
                 exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=msg),
@@ -1198,6 +1207,7 @@ A nested dictionary containing the following keys:
         if np.all(de_per_atom > 0.0) and np.all(abs(vol_changes[-2:]) < vol_tol):
             msg = 'Energy increasing for the last two iterations - something can be very wrong...'
             self.report(msg)
+            self.report(get_error_suggestion(501, 'energy_increasing'))
             return ProcessHandlerReport(
                 do_break=True,
                 exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=msg),
@@ -1234,6 +1244,7 @@ A nested dictionary containing the following keys:
             f'Critical error detected in the notifications: {", ".join([item.get("name") for item in notification])}'
         )
         self.report(message + ' - aborting.')
+        self.report(get_error_suggestion(501, 'critical_error'))
         return ProcessHandlerReport(
             do_break=True,
             exit_code=self.exit_codes.ERROR_OTHER_INTERVENTION_NEEDED.format(message=message),
@@ -1247,6 +1258,7 @@ A nested dictionary containing the following keys:
         misc = node.outputs.misc.get_dict()
         if 'run_status' not in misc:
             self.report('`run_status` is not found in misc - cannot verify the integrity of the child calculation.')
+            self.report(get_error_suggestion(500))
             return ProcessHandlerReport(exit_code=self.exit_codes.ERROR_MISSING_CRITICAL_OUTPUT, do_break=True)
         return None
 
@@ -1258,6 +1270,7 @@ A nested dictionary containing the following keys:
         run_status = self._get_run_status(node)
         if not run_status.get('finished'):
             self.report(f'The child calculation {node} did not reach the end of execution.')
+            self.report(get_error_suggestion(502))
             return ProcessHandlerReport(exit_code=self.exit_codes.ERROR_CALCULATION_NOT_FINISHED, do_break=True)
         return None
 
@@ -1270,6 +1283,7 @@ A nested dictionary containing the following keys:
         # Check that the electronic structure is converged
         if not run_status.get('electronic_converged'):
             self.report(f'The child calculation {node} does not possess a converged electronic structure.')
+            self.report(get_error_suggestion(503))
             return ProcessHandlerReport(
                 exit_code=self.exit_codes.ERROR_ELECTRONIC_STRUCTURE_NOT_CONVERGED,
                 do_break=True,
@@ -1287,6 +1301,7 @@ A nested dictionary containing the following keys:
                     'that is truncated. It should thus not be considered converged. '
                     'Treating the calculation as failed. Please inspect, maybe it is salvageable.'
                 )
+                self.report(get_error_suggestion(505))
                 return ProcessHandlerReport(
                     exit_code=self.exit_codes.ERROR_UNCONVERGED_ELECTRONIC_STRUCTURE_IN_RELAX,
                     do_break=True,
@@ -1312,6 +1327,7 @@ A nested dictionary containing the following keys:
         # Check that the ionic structure is converged
         if run_status.get('ionic_converged') is False:
             self.report(f'The child calculation {node} did not have converged ionic structure.')
+            self.report(get_error_suggestion(504))
             return ProcessHandlerReport(
                 exit_code=self.exit_codes.ERROR_IONIC_RELAXATION_NOT_CONVERGED,
                 do_break=True,
